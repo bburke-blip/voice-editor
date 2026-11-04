@@ -1,0 +1,2181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Voice Editor</title>
+<link rel="manifest" href="manifest.webmanifest"><meta name="theme-color" content="#1f3a5f"><link rel="apple-touch-icon" href="icon-192.png"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Literata:opsz,wght@7..72,400;7..72,600&family=IBM+Plex+Mono:wght@400&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+/* Layout: control bar on top; manuscript column left, voice console right; stacks on narrow screens */
+:root{
+  --paper:#f5f7f6; --sheet:#ffffff; --ink:#1b2321; --muted:#5b6965; --line:#d7dedb;
+  --accent:#0d6a5d; --accent-ink:#ffffff; --mark:rgba(250,204,21,.38); --edited:#c2410c;
+  --note:rgba(56,189,248,.22); --note-line:#0284c7;
+  --good:#15803d; --warn:#b45309; --bad:#b91c1c;
+  --ui:"Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
+  --read:"Literata", Georgia, "Times New Roman", serif;
+  --mono:"IBM Plex Mono", Consolas, monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){ :root{
+  --paper:#111614; --sheet:#171d1b; --ink:#e4ebe8; --muted:#97a5a0; --line:#2b3532;
+  --accent:#4fc2ad; --accent-ink:#0b1210; --mark:rgba(250,204,21,.22); --edited:#fb923c;
+  --note:rgba(56,189,248,.18); --note-line:#38bdf8;
+  --good:#4ade80; --warn:#fbbf24; --bad:#f87171; color-scheme:dark; } }
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--paper);color:var(--ink);font:16px/1.5 var(--ui)}
+header{position:sticky;top:0;z-index:5;background:var(--sheet);border-bottom:1px solid var(--line);
+  padding:10px max(16px,env(safe-area-inset-left)) 10px max(16px,env(safe-area-inset-right));display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center}
+h1 .ver{font-weight:400;color:var(--muted);font-size:.8rem}
+h1{font:700 1.05rem/1 var(--ui);margin:0 6px 0 0;letter-spacing:.02em}
+button,.filebtn,select,input[type=text]{font:inherit;font-size:.95rem;color:var(--ink);background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:7px 12px;cursor:pointer}
+button:hover,.filebtn:hover{border-color:var(--accent)}
+button:focus-visible,select:focus-visible,input:focus-visible,.filebtn:focus-within{outline:2px solid var(--accent);outline-offset:2px}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:700;min-width:110px}
+button.mic.on{background:var(--good);border-color:var(--good);color:#fff}
+.filebtn input{position:absolute;width:1px;height:1px;opacity:0}
+.group{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+label.small{font-size:.8rem;color:var(--muted);display:flex;gap:6px;align-items:center}
+#fname{min-width:0;width:240px;cursor:text}
+#voice{max-width:230px}
+.spacer{flex:1}
+body{display:flex;flex-direction:column;overflow:hidden}
+header{flex:none}
+main{flex:1;min-height:0;width:100%;display:grid;grid-template-columns:minmax(0,1fr) 380px;grid-template-rows:minmax(0,1fr);gap:20px;padding:16px max(16px,env(safe-area-inset-left)) 16px max(16px,env(safe-area-inset-right));max-width:1400px;margin:0 auto}
+#doc{overflow-y:auto;min-height:0;overscroll-behavior:contain}
+aside{overflow-y:auto;min-height:0;overscroll-behavior:contain;padding:0 6px 16px 0;scrollbar-gutter:stable}
+aside>section:first-child{position:sticky;top:0;z-index:2;box-shadow:0 6px 12px -8px rgba(0,0,0,.25)}
+@media (max-width:900px){ body{display:block;overflow:auto} html,body{height:auto}
+  main{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:none} #doc,aside{overflow:visible} aside>section:first-child{position:static;box-shadow:none} }
+#doc{background:var(--sheet);border:1px solid var(--line);border-radius:10px;padding:28px clamp(16px,4vw,48px);font:1.06rem/1.7 var(--read);min-width:0}
+#doc p{margin:0 0 .9em;padding:4px 10px;border-left:3px solid transparent;border-radius:4px;cursor:pointer;max-width:72ch}
+#doc p.empty{min-height:.6em;padding:0;margin:0 0 .4em;cursor:default}
+#doc p.cur{background:color-mix(in srgb,var(--accent) 8%,transparent);border-left-color:var(--accent)}
+#doc p.dirty{border-left-color:var(--edited)}
+#doc p.cur.dirty{border-left-color:var(--edited)}
+#doc .sel{outline:2px solid var(--accent);outline-offset:1px;border-radius:3px;background:color-mix(in srgb,var(--accent) 12%,transparent)}
+#doc.typing{cursor:text}
+#doc.typing:focus{outline:2px solid var(--accent);outline-offset:-2px}
+#doc.typing p{cursor:text}
+#doc .rd{background:var(--mark);border-radius:3px}
+#doc .hl{background:var(--note);box-shadow:inset 0 -2px 0 var(--note-line);border-radius:2px}
+#doc .hl.done{background:transparent;box-shadow:inset 0 -1px 0 var(--note-line)}
+#doc p.noted{box-shadow:inset -3px 0 0 var(--note-line)}
+#notes{list-style:none;margin:10px 0 0;padding:0;display:grid;gap:10px;max-height:360px;overflow:auto;font-size:.88rem}
+#notes li{border-top:1px solid var(--line);padding-top:8px;display:grid;gap:6px}
+#notes li.done .ntext{text-decoration:line-through;color:var(--muted)}
+#notes .sec{color:var(--muted);font-size:.78rem} #notes .q{font-style:italic}
+#notes .ntext{min-height:1.4em;padding:3px 6px;border-radius:6px;border:1px solid transparent;cursor:text}
+#notes .ntext:hover,#notes .ntext:focus{border-color:var(--line);outline:none}
+#notes .ntext:empty::before{content:attr(data-placeholder);color:var(--muted)}
+#notes .nrow{display:flex;gap:10px;align-items:center} #notes .nrow button{padding:3px 10px;font-size:.8rem}
+#doc mark{background:var(--mark);color:inherit;border-radius:3px;padding:0 1px}
+#doc p.flash{animation:flash 1.4s ease-out}
+@keyframes flash{from{background:color-mix(in srgb,var(--edited) 25%,transparent)}}
+@media (prefers-reduced-motion:reduce){#doc p.flash{animation:none}}
+aside{display:flex;flex-direction:column;gap:16px;min-width:0}
+.panel{background:var(--sheet);border:1px solid var(--line);border-radius:10px;padding:16px}
+.panel h2{font:700 .78rem/1 var(--ui);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 10px}
+#status{display:flex;align-items:center;gap:10px;font-weight:700}
+#dot{width:12px;height:12px;border-radius:50%;background:var(--muted);flex:none}
+#status[data-s=reading] #dot{background:var(--good)}
+#status[data-s=paused] #dot{background:var(--warn);animation:pulse 1.2s infinite}
+@keyframes pulse{50%{opacity:.35}}
+#heard{font:.85rem/1.45 var(--mono);color:var(--muted);margin-top:8px;min-height:2.6em;overflow-wrap:anywhere}
+#reply{margin-top:6px;font-size:.92rem;min-height:1.4em}
+#reply.bad{color:var(--bad)} #reply.good{color:var(--good)}
+#cmdform{display:flex;gap:6px;margin-top:10px} #cmd{flex:1;min-width:0;cursor:text}
+.say{margin:0;padding:0;list-style:none;display:grid;gap:7px;font-size:.9rem}
+.say b{font-family:var(--mono);font-weight:400;font-size:.84rem;background:var(--paper);border:1px solid var(--line);border-radius:5px;padding:1px 6px}
+.say span{color:var(--muted)}
+.tropts{display:flex;flex-wrap:wrap;gap:6px 14px;margin:10px 0}
+#castlist{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+#castlist li{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:6px;align-items:center;border-top:1px solid var(--line);padding-top:8px}
+#castlist .cname{grid-column:1/-1;font-weight:700;font-size:.88rem} #castlist .cname span{font-weight:400;color:var(--muted);font-size:.78rem}
+#castlist select{min-width:0;width:100%;padding:5px 6px;font-size:.82rem} #castlist button{padding:5px 10px;font-size:.82rem}
+#doc p[data-role=scene]{font-weight:600;letter-spacing:.02em}
+#doc p[data-role=cue]{text-align:center;margin-bottom:.1em;letter-spacing:.04em}
+#doc p[data-role=paren]{margin-left:22%;margin-bottom:.1em;font-style:italic}
+#doc p[data-role=dialogue]{margin-left:12%;max-width:60ch}
+#doc p[data-muted="1"]{color:var(--muted)}
+.grammar{width:100%;border-collapse:collapse;font-size:.86rem;margin-bottom:10px}
+.grammar th{text-align:left;font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:2px 6px;border-bottom:1px solid var(--line)}
+.grammar td{padding:4px 6px;vertical-align:top;border-bottom:1px solid var(--line)} .grammar td span{color:var(--muted);font-size:.8rem}
+.grammar b{font-family:var(--mono);font-weight:400;font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:5px;padding:0 5px;line-height:1.9}
+#cform{display:flex;gap:6px;margin:8px 0} #cq{flex:1;min-width:0;font:inherit;font-size:.92rem;color:var(--ink);background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:7px 10px;resize:vertical}
+.copts{display:flex;flex-wrap:wrap;gap:6px 14px} .copts select{padding:3px 6px;font-size:.8rem}
+.note.good{color:var(--good)} .note.bad{color:var(--warn)}
+#convo{list-style:none;margin:10px 0 0;padding:0;display:grid;gap:12px;font-size:.9rem}
+#convo li{border-top:1px solid var(--line);padding-top:8px;display:grid;gap:6px}
+aside{overflow-x:hidden} #convo li,#convo .cq,#convo .ca,#convo .csugg{min-width:0;overflow-wrap:anywhere}
+#convo .cq{font-weight:700} #convo .ca{white-space:pre-wrap} #convo .ca.bad{color:var(--bad)}
+#convo .csugg{border-left:3px solid var(--accent);padding:6px 10px;background:color-mix(in srgb,var(--accent) 7%,transparent);border-radius:4px;display:grid;gap:6px;justify-items:start}
+#convo .csugg div{font-family:var(--read)} .thinking{color:var(--muted);animation:pulse 1.2s infinite}
+.dictopts{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:8px} #dwait{width:90px;vertical-align:middle}
+#cmd.wispr{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 25%,transparent)}
+#dform{display:flex;gap:6px;margin:10px 0} #dform input{flex:1;min-width:0;cursor:text}
+#dlist{list-style:none;margin:0;padding:0;max-height:220px;overflow:auto;font-size:.86rem;display:grid;gap:4px}
+#dlist li{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1.3fr) auto;gap:8px;align-items:center;border-top:1px solid var(--line);padding-top:4px}
+#dlist .from{font-family:var(--mono);font-size:.8rem;overflow-wrap:anywhere} #dlist .arrow{color:var(--muted);font-size:.75rem} #dlist .to{overflow-wrap:anywhere}
+#dlist .x{padding:2px 8px;font-size:.75rem}
+.filebtn{position:relative}
+#log{list-style:none;margin:0;padding:0;display:grid;gap:10px;font-size:.86rem;max-height:340px;overflow:auto}
+#log li{border-top:1px solid var(--line);padding-top:8px}
+#log .sec{color:var(--muted);font-size:.78rem}
+#log del{color:var(--bad)} #log ins{color:var(--good);text-decoration:none}
+.note{font-size:.82rem;color:var(--muted)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:space-between}
+</style>
+</head>
+<body>
+<header>
+  <h1>Voice Editor <span class="ver">v29</span></h1>
+  <label class="filebtn" id="openlabel" tabindex="0" title="Word, PDF or text">Open file<input id="file" type="file" accept=".docx,.pdf,.txt,.fountain,.md"></label>
+  <div class="group">
+    <button id="back" title="Previous section (Left arrow)">Back</button>
+    <button id="play" class="primary" title="Read or pause (Space)">Read</button>
+    <button id="next" title="Next section (Right arrow)">Next</button>
+    <button id="mic" class="mic" title="Microphone on or off">Mic off</button>
+  </div>
+  <label class="small">Speed <input id="rate" type="range" min="0.7" max="1.6" step="0.05" value="1"></label>
+  <label class="small">Voice <select id="voice"></select></label>
+  <span class="spacer"></span>
+  <div class="group">
+    <input id="fname" type="text" aria-label="Save as file name">
+    <button id="save">Save copy</button>
+  </div>
+</header>
+<main>
+  <article id="doc" aria-label="Document"></article>
+  <aside>
+    <section class="panel" aria-live="polite">
+      <div id="status" data-s="idle"><span id="dot"></span><span id="stxt">Ready. Press Read.</span></div>
+      <div id="editmode" class="note" style="margin-top:4px"></div>
+      <div id="heard"></div>
+      <div id="reply"></div>
+      <form id="cmdform"><input id="cmd" type="text" placeholder="Or type a command" aria-label="Type a command"><button>Do it</button></form>
+      <div class="dictopts">
+        <label class="small"><input id="wispr" type="checkbox"> Dictate with Wispr Flow</label>
+        <label class="small" title="How long it waits after you stop talking before it takes your new line or note">Wait while I think <input id="dwait" type="range" min="2" max="10" step="1" value="4"> <span id="dwaitv"></span></label>
+      </div>
+    </section>
+    <section class="panel" id="claudepanel" hidden>
+      <div class="row"><h2 style="margin:0">Ask Claude</h2><button id="cnew" type="button">New conversation</button></div>
+      <p id="cmode" class="note"></p>
+      <form id="cform"><textarea id="cq" rows="2" placeholder="Ask about the line you're on..." aria-label="Question for Claude"></textarea><button>Ask</button></form>
+      <div class="copts">
+        <label class="small">Send <select id="cscope"><option value="section">This section</option><option value="scene" selected>This scene</option><option value="script">Whole script</option></select></label>
+        <label class="small">Model <select id="cmodel"><option value="sonnet">Sonnet</option><option value="opus">Opus (deepest)</option><option value="haiku">Haiku (fastest)</option></select></label>
+        <label class="small"><input id="caloud" type="checkbox" checked> Read answers aloud</label>
+        <label class="small" title="Only when the app's own rules don't recognise what you said. Uses Haiku, a few hundred tokens each time."><input id="cinterp" type="checkbox" checked> Work out commands I phrase differently</label>
+      </div>
+      <p id="cest" class="note" style="margin:4px 0 0"></p>
+      <ul id="convo"></ul>
+    </section>
+    <section class="panel">
+      <div class="row"><h2 style="margin:0">Notes <span id="ncount"></span></h2><button id="notesdl" type="button">Save notes</button></div>
+      <ul id="notes"></ul>
+    </section>
+    <section class="panel">
+      <div class="row"><h2 style="margin:0">Table read</h2>
+        <label class="small switch"><input id="tr" type="checkbox" checked> Voices per character</label></div>
+      <p class="note">Each character reads their own lines in their own voice. Names are not read out. The main Voice at the top is the narrator (stage manager): it reads scene headings, action and transitions, and no character is given its voice.</p>
+      <div class="tropts">
+        <label class="small"><input id="tr_scene" type="checkbox" checked> Scene headings</label>
+        <label class="small"><input id="tr_action" type="checkbox" checked> Action</label>
+        <label class="small"><input id="tr_paren" type="checkbox"> Parentheticals</label>
+        <label class="small"><input id="tr_trans" type="checkbox"> Transitions</label>
+      </div>
+      <ul id="castlist"></ul>
+      <div class="row" style="margin-top:10px;justify-content:flex-start"><button id="recast" type="button">Re-cast all</button></div>
+    </section>
+    <section class="panel">
+      <h2>What to say</h2>
+      <ul class="say">
+        <li><b>pause</b> <span>or stop, hold on, wait. Space bar works too.</span></li>
+        <li><b>make a note ...</b> <span>attaches to the section you're on, e.g. "make a note on this section to rewrite the ending". Works while it's reading.</span></li>
+        <li><b>make a note</b> <span>then say it at your own pace; "done" to finish</span></li>
+        <li><b>continue</b> <span>or keep going, carry on</span></li>
+        <li><b>go back</b> · <b>next</b> <span>a section at a time</span></li>
+        <li><b>go to [words]</b> <span>the section with those words</span> · <b>go to the top</b></li>
+        <li><b>repeat</b> <span>reads the section again</span></li>
+        <li><b>read the note</b> · <b>delete the note</b> · <b>undo</b> · <b>save</b></li>
+      </ul>
+      <p class="note">Click any section to read from there. Turn the mic off to type straight into the script.</p>
+      <p class="note">PDFs open too; edits save as a Word file. Say "comma", "period" or "question mark" to add punctuation. "Dash" becomes two hyphens. Turn the mic off to type, select, copy and paste straight in the script. Headphones stop the mic hearing the reading voice.</p>
+    </section>
+    <section class="panel">
+      <div class="row"><h2 style="margin:0">Pronunciation <span id="dcount"></span></h2>
+        <label class="small"><input id="capsfix" type="checkbox" checked> Read CAPITALS as words</label></div>
+      <p class="note">How the voice says things. The document itself is not changed. Screenplay terms are built in; add names and words it gets wrong. You can also say "pronounce Siobhan as shiv-awn".</p>
+      <form id="dform"><input id="dfrom" type="text" placeholder="Written" aria-label="Written as"><input id="dto" type="text" placeholder="Say it as" aria-label="Say it as"><button>Add</button></form>
+      <ul id="dlist"></ul>
+      <div class="row" style="margin-top:10px;justify-content:flex-start">
+        <button id="dexport" type="button">Save list</button>
+        <label class="filebtn" tabindex="0">Load list<input id="dimport" type="file" accept=".txt"></label>
+        <button id="dreset" type="button">Restore screenplay terms</button>
+      </div>
+    </section>
+    <section class="panel">
+      <div class="row"><h2 style="margin:0">Changes <span id="ccount"></span></h2><button id="logdl">Save change list</button></div>
+      <ul id="log" style="margin-top:10px"></ul>
+    </section>
+  </aside>
+</main>
+<script>
+// ===== Core editing logic (pure, testable) =====
+const NUMS = {zero:'0',one:'1',two:'2',three:'3',four:'4',five:'5',six:'6',seven:'7',eight:'8',nine:'9',ten:'10',eleven:'11',twelve:'12',thirteen:'13',fourteen:'14',fifteen:'15',sixteen:'16',seventeen:'17',eighteen:'18',nineteen:'19',twenty:'20'};
+function normWord(w){
+  w = w.toLowerCase().replace(/[‘’]/g,"'").replace(/[^a-z0-9']/g,'').replace(/^'+|'+$/g,'');
+  return NUMS[w] || w;
+}
+function tokens(text){
+  const out=[]; const re=/[A-Za-z0-9‘’'À-ſ]+/g; let m;
+  while((m=re.exec(text))){ const w=normWord(m[0]); if(w) out.push({w, s:m.index, e:m.index+m[0].length}); }
+  return out;
+}
+function lev(a,b){
+  if(Math.abs(a.length-b.length)>2) return 9;
+  const d=[]; for(let i=0;i<=a.length;i++){d[i]=[i];}
+  for(let j=1;j<=b.length;j++) d[0][j]=j;
+  for(let i=1;i<=a.length;i++) for(let j=1;j<=b.length;j++)
+    d[i][j]=Math.min(d[i-1][j]+1,d[i][j-1]+1,d[i-1][j-1]+(a[i-1]===b[j-1]?0:1));
+  return d[a.length][b.length];
+}
+function wordEq(a,b){
+  if(a===b) return true;
+  const sa=a.replace(/'s$|s$/,''), sb=b.replace(/'s$|s$/,'');
+  if(sa && sa===sb) return true;
+  return a.length>3 && b.length>3 && lev(a,b)<=1;
+}
+function lcs(p,win){
+  const n=p.length,m=win.length; const d=Array.from({length:n+1},()=>new Array(m+1).fill(0));
+  for(let i=1;i<=n;i++) for(let j=1;j<=m;j++)
+    d[i][j]= wordEq(p[i-1],win[j-1].w) ? d[i-1][j-1]+1 : Math.max(d[i-1][j],d[i][j-1]);
+  return d[n][m];
+}
+// Find the span of `phrase` in `text`, tolerant of speech-recognition slips.
+function findSpan(text, phrase){
+  const p=tokens(phrase).map(t=>t.w); const dt=tokens(text);
+  const n=p.length; if(!n||!dt.length) return null;
+  let best=null;
+  for(const m of [n,n-1,n+1]){
+    if(m<1||m>dt.length) continue;
+    for(let i=0;i+m<=dt.length;i++){
+      const win=dt.slice(i,i+m);
+      if(!wordEq(p[0],win[0].w) && !wordEq(p[n-1],win[m-1].w)) continue;
+      const score=lcs(p,win)/Math.max(n,m);
+      if(!best||score>best.score+1e-9) best={s:win[0].s,e:win[m-1].e,score};
+    }
+  }
+  const need = n<=2 ? 1 : (n<=4 ? 0.74 : 0.7);
+  return best && best.score>=need-1e-9 ? best : null;
+}
+// Spoken punctuation -> characters. "dash" becomes two hyphens (house style).
+function spokenPunct(s){
+  return s
+    .replace(/\s*\b(?:comma)\b/gi, ',')
+    .replace(/\s*\b(?:period|full stop)\b/gi, '.')
+    .replace(/\s*\bquestion mark\b/gi, '?')
+    .replace(/\s*\bexclamation (?:point|mark)\b/gi, '!')
+    .replace(/\s*\bsemicolon\b/gi, ';')
+    .replace(/\s*\bcolon\b/gi, ':')
+    .replace(/\s*\b(?:dash|double dash)\b\s*/gi, ' -- ')
+    .replace(/\s*\bellipsis\b/gi, '...')
+    .replace(/\s+([,.;:?!])/g,'$1')
+    .replace(/\s{2,}/g,' ').trim();
+}
+function tidy(t){
+  return t.replace(/,\s*([.?!;:])/g,'$1').replace(/ {2,}/g,' ').replace(/ +([,.;:?!])/g,'$1').replace(/^\s+|\s+$/g,'').replace(/([.?!]) ?([.?!])(?!\.)/g,'$1');
+}
+function matchCase(orig, rep){
+  if(!rep) return rep;
+  if(/['\u2019]s$/i.test(orig) && !/['\u2019]s$/i.test(rep) && tokens(rep).length===1) rep += orig.slice(-2).toLowerCase()==="'s"||orig.slice(-2).toLowerCase()==="\u2019s" ? orig.slice(-2) : "'s";
+  if(orig.length>1 && orig===orig.toUpperCase() && /[A-Z]/.test(orig)) return rep.toUpperCase();
+  if(/^[A-Z]/.test(orig) && /^[a-z]/.test(rep)) return rep[0].toUpperCase()+rep.slice(1);
+  if(/^[a-z]/.test(orig) && /^[A-Z][a-z]/.test(rep) && !/^I\b/.test(rep)) return rep[0].toLowerCase()+rep.slice(1);
+  return rep;
+}
+
+// Parse a spoken command. Returns {type, ...}.
+// One target vocabulary for every command: "this line", "this section", "the last line", "the last section".
+// "This" always means what was being read when you spoke.
+function parseTarget(rest){
+  const r=rest.trim().replace(/[,.!?]+$/,'').replace(/^["'\u201C]|["'\u201D]$/g,'').toLowerCase();
+  if(typeof SEL!=='undefined' && SEL && /^(?:it|that|this|the selection|selection|my selection|what i selected|that bit|that part|that piece|that phrase|those words|that sentence|that line|the selected (?:text|line|bit|words))$/.test(r)) return {unit:'sel', which:'this'};
+  if(/^(?:this|that|it|here|there|this one|that one)?$/.test(r)) return {unit:'sentence', which:'this'};
+  if(/^(?:(?:this|that|the|current)\s+)*(?:(?:whole|entire|full|complete)\s+)?(?:line|sentence)$/.test(r)) return {unit:'sentence', which:'this'};
+  if(/^(?:(?:this|that|the|current)\s+)*(?:(?:whole|entire|full|complete)\s+)?(?:section|paragraph|speech|passage|block|bit|part|dialogue|dialog)$/.test(r) || /^the whole thing$/.test(r)) return {unit:'para', which:'this'};
+  if(/^(?:(?:this|that|the|current)\s+)*(?:(?:whole|entire|full|complete)\s+)?scene$/.test(r)) return {unit:'scene', which:'this'};
+  if(/^(?:the\s+)?(?:last|previous|prior)\s+(?:line|sentence|one)$/.test(r)) return {unit:'sentence', which:'prev'};
+  if(/^(?:the\s+)?(?:last|previous|prior)\s+(?:section|paragraph|speech|passage|block|bit|part)$/.test(r)) return {unit:'para', which:'prev'};
+  return parseCharTarget(r);
+}
+// ---- character targets: "everything Grace says", "all of Grace's lines", "Grace's last line"
+function findCharacter(str){
+  if(typeof S==='undefined' || !S || !S.cast || !S.cast.length) return null;
+  const nz=n=>n.toLowerCase().replace(/[^a-z0-9' ]/g,' ').replace(/\s+/g,' ').trim();
+  const q=nz(str).replace(/^(?:the|a|an)\s+/,''); if(q.length<2) return null;
+  const names=S.cast.map(c=>({n:c.name, k:nz(c.name)}));
+  let h=names.find(x=>x.k===q); if(h) return h.n;
+  h=names.find(x=>x.k.split(' ').includes(q)); if(h) return h.n;
+  h=names.find(x=>x.k.startsWith(q+' ')||x.k.endsWith(' '+q)); if(h) return h.n;
+  if(q.length>=4){ h=names.find(x=>x.k.split(' ').some(tk=>tk.length>=4 && lev(tk,q)<=1)); if(h) return h.n; }
+  return null;
+}
+function parseCharTarget(r){
+  let m, who, qual='', all=false, which='this';
+  if((m=r.match(/^(?:everything|every thing|all that|all of what|all the things)\s+(?:that\s+)?(.+?)\s+(?:says|said|say|speaks|is saying|are saying)\b[\s,]*(.*)$/))){ who=m[1]; qual=m[2]; all=true; }
+  else if((m=r.match(/^(?:all|every|each)(?:\s+of)?\s+(?:the\s+)?(.+?)(?:['\u2019]s?|s)?\s+(?:lines?|dialogue|dialog|speeches|speech|words)\b[\s,]*(.*)$/))){ who=m[1]; qual=m[2]; all=true; }
+  else if((m=r.match(/^(.+?)(?:['\u2019]s?|s)?\s+(?:(?:whole|entire|full|complete|total)\s+)?(?:lines|dialogue|dialog|speeches)\b[\s,]*(.*)$/))){ who=m[1]; qual=m[2]; all=true; }
+  else if((m=r.match(/^(?:the\s+)?(next|last|previous|prior|first)\s+(?:line|speech|thing)\s+(.+?)\s+(?:says|said)$/))){ who=m[2]; which=/last|previous|prior/.test(m[1])?'prev':m[1]==='next'?'next':'first'; }
+  else if((m=r.match(/^(.+?)(?:['\u2019]s?|s)?\s+(?:(last|previous|prior|next|current|this|that|first)\s+)?(?:(?:whole|entire|full|complete)\s+)?(?:line|speech|dialogue|dialog|section|paragraph)\b[\s,]*(.*)$/))){ who=m[1]; qual=m[3]; const w=(m[2]||'this'); which=/last|previous|prior/.test(w)?'prev':/next/.test(w)?'next':/first/.test(w)?'first':'this'; }
+  else return null;
+  const name=findCharacter(who); if(!name) return null;
+  const wide=/\b(?:everywhere|throughout|all through|all over|(?:in|across|through) (?:the )?(?:whole |entire )?(?:script|screenplay|document|file|thing|movie|film))\b/.test(qual);
+  return {unit:'char', name, all, which, wide};
+}
+const FILLER=/^(?:(?:okay|ok|so|um|uh|er|right|alright|all right|now|and|then|please|just|hey|can you|could you|would you|will you|i want to|i'd like to|i would like to|i need to|let's|let us|go ahead and)[,\s]+)+(?=\S)/i;
+const WHERE_SUFFIX=/[,\s]+(?:in|on|within|inside)\s+(?:this|that|the)\s+(?:line|sentence|selection|selected (?:line|text|bit))$/i;
+const WHERE_PREFIX=/^(?:in|on|within|inside)\s+(?:this|that|the)\s+(?:line|sentence|selection|selected (?:line|text|bit))[,\s]+/i;
+function unquote(t){ return t.trim().replace(/^[\u2018'"\u201C]+/,'').replace(/[\u2019'"\u201D]+$/,'').trim(); }
+// "the word our", "where it says our", "our" -> "our"
+function cleanOld(a){ return unquote(cleanSpoken(a).replace(/^(?:the\s+)?(?:word|words|phrase|text|bit|part)\s+(?:that\s+says\s+)?/i,'').replace(/^(?:where\s+it\s+says|the bit that says|the part that says)\s+/i,'')); }
+// "'the.'" -> "the" (a full stop only stays if you're replacing something that had one)
+function cleanNew(b, old){ let t=unquote(b.trim().replace(/[\u2019'"\u201D]?[.!?]*$/, m=>m)); t=unquote(t);
+  if(!/[.!?]$/.test(old||'')) t=t.replace(/[.!?]+$/,''); return unquote(t); }
+// Quoted form, the most reliable thing Wispr produces: change "our" to "the"
+function parseQuotedChange(s){
+  const m=s.match(/^(?:change|replace|swap|switch|turn)\s+(?:the\s+(?:word|words|phrase|text|bit)\s+)?[\u2018'"\u201C](.+?)[\u2019'"\u201D]\s*,?\s*(?:to|with|into|for|over to)\s*,?\s*[\u2018'"\u201C]?(.+?)[\u2019'"\u201D]?\s*[.!?]*\s*(everywhere|throughout|all through the (?:script|document))?\s*[.!?]*$/i);
+  if(!m) return null;
+  const a=m[1].trim(), b=m[2].replace(/[.!?]+$/,'').trim();
+  return {type:'change', candidates:[{a, b}], scope:'near', global:!!m[3], quoted:true};
+}
+function parseCommand(raw){
+  let s0=raw.trim().replace(FILLER,'').replace(WHERE_PREFIX,'').replace(/[?]+$/,'');
+  { const q=parseQuotedChange(s0); if(q) return q; }
+  let s = s0.replace(/[.?!]+$/,'').trim().replace(WHERE_SUFFIX,'')
+    .replace(/^(?:okay|ok|so|um|uh|er|right|alright|all right|now|and|please)[,\s]+(?=\S)/i,'')
+    .replace(/^((?:go|jump|move|head|take me|skip)(?:\s+(?:back|over))?(?:\s+to)?|select|pick|grab|find|change|replace|rewrite|remove|delete|highlight|note)\s*[,:;]+\s*/i,'$1 ')
+    .replace(/[\s,]+please$/i,'').trim();
+  const low = s.toLowerCase();
+  if(/^(?:undo|undo that|take that back|put it back)$/.test(low)) return {type:'undo'};
+  if(/^(?:continue|resume|go on|keep going|keep reading|read on|carry on|start reading|okay continue|ok continue|continue reading|play on|(?:read|start|begin|carry on|continue|resume|read on|start reading|keep reading|play)\s+(?:again\s+)?(?:from\s+)?here)$/.test(low)) return {type:'resume'};
+  if(/^(?:repeat|again|read (?:it|that|this) (?:again|back)|read (?:it|that) back|say (?:it|that) again|repeat that)$/.test(low)) return {type:'repeat'};
+  { // "yeah, apply it", "apply", "use this", "yes please", "go ahead", "make the change"...
+    const yes=/^(?:(?:yes|yeah|yep|yup|sure|ok|okay|please|great|perfect|good|nice|love it|i like it|that's good|sounds good)[,!.\s]*)*/;
+    const rest=low.replace(yes,'').replace(/[,!.\s]*(?:please|thanks|thank you)$/,'').trim();
+    const applyVerb=/^(?:apply|apply it|apply that|apply this|apply the change|apply the suggestion|apply your suggestion|use|use it|use that|use this|use the suggestion|use the new (?:line|version|wording)|use (?:claude'?s|your|the) (?:version|suggestion|rewrite|line|wording)|take it|take that|accept|accept it|accept that|do it|go ahead|go for it|make the change|make that change|make it so|put it in|swap it in|put that in|change it to that|that one)$/;
+    if(applyVerb.test(rest)) return {type:'usesugg'};
+    if(rest==='' && /^(?:yes|yeah|yep|yup|sure|perfect|great|love it|i like it|sounds good|that's good)\b/.test(low) && (lastSuggestion || (convo.length && convo[convo.length-1].sugg && !convo[convo.length-1].used))) return {type:'usesugg'};
+  }
+  { const cm=s.match(/^(?:hey\s+|ok(?:ay)?\s+|so\s+)?(?:ask\s+)?(?:claude|cloud|clawed|clod|klaud)\b[,:]?\s*(.+)$/i); if(cm && cm[1].trim()) return {type:'ask', q:cm[1].trim()}; }
+  { const nv=parseNav(s, low); if(nv) return nv; }
+  if(/^(?:save|save it|save the file|download|export)$/.test(low)) return {type:'save'};
+  if(/^(?:pause|stop|hold on|wait|hang on|hold it|hold up|halt|stop reading|stop there|stop here|pause there|pause here|pause it|pause reading|that's enough|that is enough|enough)$/.test(low)) return {type:'pause'};
+  if(/^(?:stop listening|mic off|microphone off)$/.test(low)) return {type:'micoff'};
+  if(/^(?:help|what can i say)$/.test(low)) return {type:'help'};
+  { const sp=parseSpelling(s); if(sp) return sp; }
+  if(/^(?:done|done editing|i'm done|that's it|finished|ok|okay|thanks|thank you)$/.test(low)) return {type:'noop'};
+  if(/^(?:next note|go to (?:the )?next note|next highlight)$/.test(low)) return {type:'nextnote'};
+  if(/^(?:previous note|last note|go to (?:the )?(?:previous|last) note|previous highlight)$/.test(low)) return {type:'prevnote'};
+  if(/^(?:read (?:the |my |this )?notes?|what(?:'s| is) the note|read (?:the |this )?comment)$/.test(low)) return {type:'readnote'};
+  if(/^(?:remove|delete|clear|cancel) (?:the |this |that |my )?(?:highlight|note|comment|mark)s?(?: here)?$/.test(low)) return {type:'unnote'};
+  let hm=s.match(/^(?:highlight|high light|hi light|hilight|hilite|highlights|highlighted|mark|flag)\b\s*(.*)$/i);
+  if(hm){ let rest=hm[1].trim(), note=null;
+    const nk=rest.match(/(?:^|,?\s+)(?:and\s+)?(?:add\s+(?:a\s+)?|with\s+(?:a\s+|the\s+)?|make\s+a\s+)?(?:note|comment)(?:\s+(?:that|saying))?[:,]?\s+(.+)$/i);
+    if(nk){ note=nk[1]; rest=rest.slice(0,nk.index).trim(); }
+    else rest=rest.replace(/,?\s+(?:and\s+)?(?:add\s+(?:a\s+)?)?(?:note|comment)[:,]?$/i,'');
+    rest=rest.replace(/[,.]$/,'').trim();
+    let target='phrase', scope='near', phrase=rest; const tg=parseTarget(rest);
+    if(tg){ target=tg.unit==='char'?'para':tg.unit; scope=tg.which; }
+    else phrase=rest.replace(/^(?:the\s+)?(?:words?|phrase)\s+/i,'');
+    return {type:'highlight', target, phrase, scope, note};
+  }
+  let nm=s.match(/^(?:note|comment|add (?:a )?(?:note|comment)|make a note|leave a note)(?: that| saying)?[:,]?\s+(.+)$/i);
+  if(nm) return {type:'note', note:nm[1]};
+  let dm=s.match(/^(?:pronounce|say)\s+(.+?)\s+as\s+(.+)$/i);
+  if(dm) return {type:'dict', from:dm[1], to:dm[2]};
+
+  let scope='near';
+  const scopeRe=/\s+(?:in|from)\s+(?:the|that|this)\s+(last|previous|current|same)\s+(?:section|paragraph|line|bit|part)$/i;
+  let sm=s.match(scopeRe);
+  if(sm){ scope = /last|previous/i.test(sm[1]) ? 'prev' : 'near'; s=s.replace(scopeRe,''); }
+  let global=false;
+  const globRe=/\s+(?:everywhere|throughout|all through|in the whole (?:document|script|book|file)|all over)$/i;
+  if(globRe.test(s)){ global=true; s=s.replace(globRe,''); }
+
+  let m;
+  if((m=s.match(/^(?:change|replace|rewrite|redo|fix|reword)\s+(.+)$/i))){
+    const wideIf=tg=>{ if(tg && tg.unit==='char' && global) tg.wide=true; return tg; };
+    const rest=m[1].replace(/\s+(?:to|two|too|with|into|as|so it says|so it reads)[:,]?$/i,''); const tw=wideIf(parseTarget(rest)); if(tw) return {type:'rewrite', ...tw, text:null};
+    const re=/\s+(?:to|two|too|2|with|into|as|so it says|so it reads)[:,]?\s+/gi; let x;
+    while((x=re.exec(rest))){ const tg=wideIf(parseTarget(rest.slice(0,x.index))); if(tg){ const nt=rest.slice(x.index+x[0].length).trim();
+      return {type:'rewrite', ...tg, text: /^(?:this|the following|following|what i say|something else|something|this instead|that instead|this one)[.!]?$/i.test(nt) ? null : spokenPunct(nt)}; } }
+  }
+  if((m=s.match(/^make\s+(it|that|this|this line|that line|the line|this sentence)\s+(?:say|read|into)\s+(.+)$/i))) return {type:'rewrite', ...parseTarget(m[1]), text:spokenPunct(m[2])};
+  if((m=s.match(/^(?:change|replace|swap|switch|make)\s+(.+)$/i))){
+    // candidate split points: " to " / " with " / " into " / " for "
+    const body=m[1]; const splits=[]; const re=/\s+(to|with|into|for)\s+/gi; let x;
+    while((x=re.exec(body))) splits.push({a:body.slice(0,x.index), b:body.slice(x.index+x[0].length)});
+    if(splits.length) return {type:'change', candidates:splits.map(c=>({a:c.a.replace(/^["']|["']$/g,''), b:spokenPunct(c.b)})), scope, global};
+  }
+  if(/^(?:delete|remove|erase|scrap|strike|cut|get rid of|take out)(?:\s+(?:it|that|this|them|that one|this one))?$/.test(low)) return {type:'rewrite', ...parseTarget(typeof SEL!=='undefined'&&SEL?'it':'this'), text:'', del:true};
+  if((m=s.match(/^(?:delete|remove|cut|take out|drop|lose|kill|get rid of|strike|erase|scrap)\s+(.+)$/i)) && parseTarget(m[1])){ const dt=parseTarget(m[1]); if(dt.unit==='char' && global) dt.wide=true; return {type:'rewrite', ...dt, text:'', del:true}; }
+  if((m=s.match(/^(?:delete|remove|cut|take out|drop|lose|kill)\s+(?:the\s+(?:word|words|phrase)\s+)?(.+)$/i)))
+    return {type:'delete', a:m[1], scope, global};
+  if((m=s.match(/^(?:add|insert|put)\s+(.+?)\s+at the (end|start|beginning)(?: of (?:the|this|that) (?:section|paragraph|line))?$/i)))
+    return {type:'append', text:spokenPunct(m[1]), where:/end/i.test(m[2])?'end':'start', scope};
+  if((m=s.match(/^(?:add|insert|put)\s+(.+)$/i))){
+    const body=m[1]; const splits=[]; const re=/\s+(after|before)\s+/gi; let x;
+    while((x=re.exec(body))) splits.push({a:spokenPunct(body.slice(0,x.index)), where:x[1].toLowerCase(), b:body.slice(x.index+x[0].length)});
+    if(splits.length) return {type:'insert', candidates:splits, scope};
+  }
+  return {type:'unknown', raw};
+}
+
+// Paragraph search order around the cursor.
+function searchOrder(paras, cur, scope){
+  const order=[]; const push=i=>{ if(i>=0&&i<paras.length&&paras[i].text.trim()&&!order.includes(i)) order.push(i); };
+  if(scope==='prev'){ for(let i=cur-1;i>=Math.max(0,cur-3);i--) push(i); push(cur); }
+  else { push(cur); for(let i=cur-1;i>=Math.max(0,cur-3);i--) push(i); push(cur+1); }
+  return order;
+}
+
+// Apply a parsed edit. Returns {ok, idx, before, after, msg, changes:[{idx,before,after}]}
+function applyEdit(paras, cur, cmd){
+  const order = searchOrder(paras, cur, cmd.scope);
+  if(cmd.type==='replaceAll'){
+    const idx = cmd.scope==='prev' ? order[0] : cur;
+    return single(paras, idx, cmd.text);
+  }
+  if(cmd.type==='append'){
+    const idx = cmd.scope==='prev' ? order[0] : cur; const t=paras[idx].text;
+    let add=cmd.text;
+    if(cmd.where==='end'){ if(/[.?!"']\s*$/.test(t)) add=add[0].toUpperCase()+add.slice(1); return single(paras, idx, tidy(t+' '+add)); }
+    add=add[0].toUpperCase()+add.slice(1); return single(paras, idx, tidy(add+' '+t));
+  }
+  if(cmd.type==='delete'){
+    if(cmd.global) return globalReplace(paras, cmd.a, '');
+    for(const i of order){ const sp=findSpan(paras[i].text, cmd.a); if(sp){
+      const t=paras[i].text; let nt=t.slice(0,sp.s)+t.slice(sp.e);
+      return single(paras, i, tidy(nt).replace(/^([a-z])/, (c)=> sp.s===0 ? c.toUpperCase() : c));
+    }}
+    return {ok:false, msg:`I couldn't find "${cmd.a}" near here.`};
+  }
+  if(cmd.type==='change'){
+    // choose the split whose "a" matches best
+    let best=null;
+    for(const c of cmd.candidates){
+      if(cmd.global){ const cnt=countAll(paras,c.a); if(cnt && (!best||cnt>best.cnt)) best={c,cnt}; continue; }
+      for(const i of order){ const sp=findSpan(paras[i].text, c.a); if(sp){
+        const len=tokens(c.a).length; const sc=sp.score*10+Math.min(len,8)*0.01;
+        if(!best||sc>best.sc) best={c,i,sp,sc}; break; } }
+    }
+    if(!best) return {ok:false, msg:`I couldn't find "${cmd.candidates[0].a}" near here.`};
+    if(cmd.global) return globalReplace(paras, best.c.a, best.c.b);
+    const t=paras[best.i].text; const orig=t.slice(best.sp.s,best.sp.e);
+    return single(paras, best.i, tidy(t.slice(0,best.sp.s)+matchCase(orig,best.c.b)+t.slice(best.sp.e)));
+  }
+  if(cmd.type==='insert'){
+    for(const c of cmd.candidates){ for(const i of order){ const sp=findSpan(paras[i].text, c.b); if(sp){
+      const t=paras[i].text;
+      const nt = c.where==='after' ? t.slice(0,sp.e)+' '+c.a+' '+t.slice(sp.e) : t.slice(0,sp.s)+c.a+' '+t.slice(sp.s);
+      return single(paras, i, tidy(nt));
+    }}}
+    return {ok:false, msg:`I couldn't find where to put that.`};
+  }
+  return {ok:false, msg:"I didn't catch an edit in that."};
+}
+function single(paras, idx, nt){
+  const before=paras[idx].text; if(before===nt) return {ok:false,msg:'That made no change.'};
+  paras[idx].text=nt; paras[idx].dirty=true;
+  return {ok:true, idx, before, after:nt, changes:[{idx,before,after:nt}]};
+}
+function countAll(paras, a){ let c=0; for(const p of paras){ if(p.text && findSpan(p.text,a)) c++; } return c; }
+function globalReplace(paras, a, b){
+  const changes=[];
+  paras.forEach((p,i)=>{ let t=p.text, guard=0, from=0, out='', changed=false;
+    while(guard++<50){ const rest=t.slice(from); const sp=findSpan(rest,a); if(!sp||sp.score<0.99) break;
+      out+=rest.slice(0,sp.s)+matchCase(rest.slice(sp.s,sp.e),b); from+=sp.e; changed=true; }
+    if(changed){ const nt=tidy(out+t.slice(from)); changes.push({idx:i,before:t,after:nt}); p.text=nt; p.dirty=true; }
+  });
+  if(!changes.length) return {ok:false,msg:`I couldn't find "${a}" anywhere.`};
+  return {ok:true, idx:changes[0].idx, before:changes[0].before, after:changes[0].after, changes, global:true};
+}
+function sentences(text){
+  // keep abbreviations (INT. EXT. Dr. V.O. a.m.) from ending a sentence
+  const t=text.replace(/\b(?:INT|EXT|I\/E|Mr|Mrs|Ms|Dr|St|Jr|Sr|vs|etc|No|Lt|Sgt|Det|Capt|Prof|Rev|Mt|Ft)\./gi, m=>m.slice(0,-1)+'\u0001')
+              .replace(/\b(?:[A-Za-z]\.){2,}/g, m=>m.replace(/\./g,'\u0001'));
+  const m=t.match(/[^.!?]+(?:[.!?]+["'\u201D\u2019)\]]*|$)\s*/g);
+  return (m||[t]).map(s=>s.trim().replace(/\u0001/g,'.')).filter(Boolean);
+}
+
+
+</script>
+<script>
+// ===== Document I/O =====
+const W='http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+function ownTextNodes(p){ // w:t inside p but not inside a nested w:p
+  return Array.from(p.getElementsByTagNameNS(W,'t')).filter(t=>{ let n=t.parentNode; while(n&&n!==p){ if(n.localName==='p'&&n.namespaceURI===W) return false; n=n.parentNode;} return true; });
+}
+function paraText(p){
+  let out=''; const walk=n=>{ for(let c=n.firstChild;c;c=c.nextSibling){ if(c.nodeType!==1) continue;
+    if(c.namespaceURI===W){ if(c.localName==='p') continue; if(c.localName==='t'){ out+=c.textContent; continue; }
+      if(c.localName==='tab'||c.localName==='br'){ out+=' '; continue; } if(c.localName==='delText'||c.localName==='del') continue; }
+    walk(c);} };
+  walk(p); return out.replace(/\s+/g,' ').trim();
+}
+async function loadDocx(buf){
+  const zip=await JSZip.loadAsync(buf); const xml=await zip.file('word/document.xml').async('string');
+  const doc=new DOMParser().parseFromString(xml,'application/xml');
+  const body=doc.getElementsByTagNameNS(W,'body')[0];
+  const nodes=Array.from(body.getElementsByTagNameNS(W,'p'));
+  const names={}; try{ const sx=zip.file('word/styles.xml'); if(sx){ const sd=new DOMParser().parseFromString(await sx.async('string'),'application/xml');
+    Array.from(sd.getElementsByTagNameNS(W,'style')).forEach(st=>{ const id=st.getAttributeNS(W,'styleId')||st.getAttribute('w:styleId'); const nm=st.getElementsByTagNameNS(W,'name')[0]; if(id) names[id]=nm?(nm.getAttributeNS(W,'val')||nm.getAttribute('w:val')):id; }); } }catch(e){}
+  const attr=(el,a)=>el?(el.getAttributeNS(W,a)||el.getAttribute('w:'+a)):null;
+  let anyIndent=false;
+  const sInd={}, sJc={}; try{ const sx=zip.file('word/styles.xml'); if(sx){ const sd=new DOMParser().parseFromString(await sx.async('string'),'application/xml');
+    Array.from(sd.getElementsByTagNameNS(W,'style')).forEach(st=>{ const id=st.getAttributeNS(W,'styleId')||st.getAttribute('w:styleId'); const ind=st.getElementsByTagNameNS(W,'ind')[0], jc=st.getElementsByTagNameNS(W,'jc')[0];
+      if(id){ if(ind) sInd[id]=(+(attr(ind,'left')||attr(ind,'start')||0)||0)+Math.max(0,+(attr(ind,'firstLine')||0)||0); if(jc) sJc[id]=attr(jc,'val'); } }); } }catch(e){}
+  const paras=nodes.map((n,oi)=>{ const ppr=Array.from(n.childNodes).find(c=>c.localName==='pPr'); let style='', indent=0, sid='', jcv='';
+    if(ppr){ const ps=ppr.getElementsByTagNameNS(W,'pStyle')[0]; const id=attr(ps,'val'); sid=id||''; if(id) style=names[id]||id;
+      const ind=ppr.getElementsByTagNameNS(W,'ind')[0]; indent=(+(attr(ind,'left')||attr(ind,'start')||0)||0)+Math.max(0,+(attr(ind,'firstLine')||0)||0);
+      const jc=ppr.getElementsByTagNameNS(W,'jc')[0]; jcv=attr(jc,'val')||''; }
+    if(!indent && sid && sInd[sid]) indent=sInd[sid];
+    if(!jcv && sid && sJc[sid]) jcv=sJc[sid];
+    const text=paraText(n);
+    // tabs typed at the start of a line count as indent too
+    let tabs=0; for(const el of Array.from(n.getElementsByTagNameNS(W,'*'))){ if(el.localName==='t' && (el.textContent||'').trim()) break; if(el.localName==='tab' && el.parentNode.localName!=='tabs') tabs++; }
+    if(tabs) indent+=tabs*720;
+    // centred short lines are how some writers format character names and parentheticals
+    if(jcv==='center' && text && text.length<60) indent=Math.max(indent,2880);
+    if(indent>0) anyIndent=true;
+    return {text, node:n, style, indent, oi, align:jcv}; });
+  const styled=paras.some(p=>/character|dialog|scene ?heading/i.test(p.style));
+  const orig={ ct: await zip.file('[Content_Types].xml').async('string'),
+    rels: zip.file('word/_rels/document.xml.rels') ? await zip.file('word/_rels/document.xml.rels').async('string') : null,
+    comments: zip.file('word/comments.xml') ? await zip.file('word/comments.xml').async('string') : null };
+  return {kind:'docx', zip, doc, paras, orig, origXml:xml, hasLayout: styled||anyIndent};
+}
+function setParaText(p, text){
+  const ts=ownTextNodes(p);
+  Array.from(p.getElementsByTagNameNS(W,'tab')).concat(Array.from(p.getElementsByTagNameNS(W,'br'))).forEach(e=>e.parentNode.removeChild(e));
+  if(!ts.length){ const r=p.ownerDocument.createElementNS(W,'w:r'); const t=p.ownerDocument.createElementNS(W,'w:t'); r.appendChild(t); p.appendChild(r); ts.push(t); }
+  ts.forEach((t,i)=>{ t.textContent = i===0 ? text : ''; });
+  ts[0].setAttributeNS('http://www.w3.org/XML/1998/namespace','xml:space','preserve');
+}
+async function saveDocx(state){
+  // Build from a fresh copy of the original every time: sections you added are cloned from the one before
+  // (so they keep its style), sections you removed are taken out, and edited text is written in.
+  const d2=new DOMParser().parseFromString(state.origXml,'application/xml');
+  const orig2=Array.from(d2.getElementsByTagNameNS(W,'body')[0].getElementsByTagNameNS(W,'p'));
+  const used=new Set(); const nodes=[]; let last=null;
+  state.paras.forEach(p=>{ let n;
+    if(p.oi!==undefined && !used.has(p.oi) && orig2[p.oi]){ n=orig2[p.oi]; used.add(p.oi); if(p.dirty) setParaText(n,p.text); }
+    else { const tmpl=last||orig2[0]; n=tmpl.cloneNode(true);
+      Array.from(n.getElementsByTagNameNS(W,'commentRangeStart')).concat(Array.from(n.getElementsByTagNameNS(W,'commentRangeEnd')),Array.from(n.getElementsByTagNameNS(W,'commentReference'))).forEach(e=>e.parentNode&&e.parentNode.removeChild(e));
+      if(last) last.parentNode.insertBefore(n,last.nextSibling); else tmpl.parentNode.insertBefore(n,tmpl);
+      setParaText(n,p.text); }
+    nodes.push(n); last=n; });
+  orig2.forEach((n,i)=>{ if(used.has(i)||!n.parentNode) return;
+    const sibs=Array.from(n.parentNode.childNodes).filter(c=>c.localName==='p');
+    if(n.parentNode.localName==='tc' && sibs.length<=1) setParaText(n,''); else n.parentNode.removeChild(n); });
+  let xml=new XMLSerializer().serializeToString(d2);
+  const notes=(typeof NOTES!=='undefined')?NOTES:[];
+  if(notes.length){
+    let maxId=-1; (state.orig.comments||'').replace(/w:id="(\d+)"/g,(m,d)=>{ maxId=Math.max(maxId,+d); });
+    let body='';
+    notes.slice().sort((a,b)=>a.pi-b.pi).forEach(n=>{ const p=nodes[n.pi]; if(!p) return; const id=++maxId; const mk=t=>d2.createElementNS(W,'w:'+t);
+      const st=mk('commentRangeStart'); st.setAttributeNS(W,'w:id',id); const en=mk('commentRangeEnd'); en.setAttributeNS(W,'w:id',id);
+      const ppr=Array.from(p.childNodes).find(c=>c.localName==='pPr'); p.insertBefore(st, ppr?ppr.nextSibling:p.firstChild); p.appendChild(en);
+      const r=mk('r'), ref=mk('commentReference'); ref.setAttributeNS(W,'w:id',id); r.appendChild(ref); p.appendChild(r);
+      if(n.whole) Array.from(p.getElementsByTagNameNS(W,'r')).forEach(run=>{ if(run===r||!run.getElementsByTagNameNS(W,'t').length) return;
+        let rpr=Array.from(run.childNodes).find(c=>c.localName==='rPr'); if(!rpr){ rpr=mk('rPr'); run.insertBefore(rpr,run.firstChild); }
+        if(!rpr.getElementsByTagNameNS(W,'highlight').length){ const h=mk('highlight'); h.setAttributeNS(W,'w:val','yellow'); rpr.appendChild(h); } });
+      body+=commentXml(id,n.text,n.whole?'':n.quote); });
+    xml=new XMLSerializer().serializeToString(d2);
+    addCommentParts(state.zip, body, state.orig);
+  } else {
+    state.zip.file('[Content_Types].xml', state.orig.ct);
+    if(state.orig.rels) state.zip.file('word/_rels/document.xml.rels', state.orig.rels);
+    if(state.orig.comments) state.zip.file('word/comments.xml', state.orig.comments); else state.zip.remove('word/comments.xml');
+  }
+  if(!/^<\?xml/.test(xml)) xml='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'+xml;
+  state.zip.file('word/document.xml', xml);
+  return state.zip.generateAsync({type:'blob', mimeType:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
+}
+function loadText(str){
+  { const lines=str.replace(/\r\n/g,'\n').replace(/\t/g,'    ').split('\n'), ind=l=>l.match(/^ */)[0].length, live=lines.filter(l=>l.trim());
+    const deep=live.filter(l=>ind(l)>=4).length, lv=new Set(live.map(l=>Math.round(ind(l)/3)));
+    if(live.length>=6 && deep>=live.length*0.1 && deep<=live.length*0.95 && lv.size>=2){      // spaces carry the layout: cues and dialogue are indented
+      const minI=Math.min(...live.map(ind)); const paras=[]; let cur=null;
+      lines.forEach(l=>{ if(!l.trim()){ cur=null; return; } const i=ind(l)-minI, t=l.trim();
+        if(cur && Math.abs(i-cur.i)<3){ cur.text+=' '+t; } else { cur={text:t, i}; paras.push(cur); } });
+      return {kind:'text', hasLayout:true, paras:paras.map(q=>({text:q.text.replace(/\s+/g,' ').trim(), raw:q.text, indent:Math.max(0,q.i*144)}))}; } }
+  const blocks=str.replace(/\r\n/g,'\n').split(/\n\s*\n/);
+  return {kind:'text', paras:blocks.map(b=>({text:b.replace(/\s*\n\s*/g,' ').trim(), raw:b}))};
+}
+// ===== PDF input: rebuild paragraphs from positioned text, keep indents =====
+async function loadPdf(buf, lib){
+  lib = lib || window.pdfjsLib;
+  const pdf = await lib.getDocument({data:new Uint8Array(buf), isEvalSupported:false}).promise;
+  const lines=[]; let mono=0, total=0;
+  for(let n=1;n<=pdf.numPages;n++){
+    const page=await pdf.getPage(n); const vp=page.getViewport({scale:1});
+    const tc=await page.getTextContent();
+    const rows=[];
+    for(const it of tc.items){
+      if(!it.str || !it.str.trim()){ continue; }
+      const x=it.transform[4], y=vp.height-it.transform[5], h=Math.abs(it.transform[3])||it.height||10;
+      const st=tc.styles[it.fontName]; total+=it.str.length; if(st && /mono|courier/i.test(st.fontFamily+' '+it.fontName)) mono+=it.str.length;
+      let row=rows.find(r=>Math.abs(r.y-y)<h*0.5);
+      if(!row){ row={y,h,items:[]}; rows.push(row); }
+      row.items.push({x,w:it.width,s:it.str});
+    }
+    rows.sort((a,b)=>a.y-b.y);
+    for(const r of rows){
+      r.items.sort((a,b)=>a.x-b.x);
+      let text='', end=null;
+      for(const it of r.items){
+        if(end!==null && it.x-end > r.h*0.15 && !/\s$/.test(text) && !/^\s/.test(it.s)) text+=' ';
+        text+=it.s; end=it.x+it.w;
+      }
+      text=text.replace(/\s+/g,' ').trim();
+      const top=r.y<vp.height*0.1, bottom=r.y>vp.height*0.9;
+      if((top||bottom) && /^(page\s*)?\d{1,4}\.?$/i.test(text)) continue;          // page numbers
+      if(/^\((?:continued|more)\)$/i.test(text) || /^continued:?$/i.test(text)) continue; // screenplay page carry-overs
+      lines.push({text, x:r.items[0].x, y:r.y, h:r.h, page:n, pw:vp.width, vh:vp.height});
+    }
+  }
+  // running headers and footers (the same words, ignoring digits, at the top or bottom of many pages) are not script text
+  { const zone=l=>l.y<l.vh*0.075||l.y>l.vh*0.93, key=l=>l.text.replace(/\d+/g,'#').replace(/\s+/g,' ').trim().toLowerCase();
+    const seen=new Map(); lines.forEach(l=>{ if(zone(l)){ const k=key(l); if(!seen.has(k)) seen.set(k,new Set()); seen.get(k).add(l.page); } });
+    const need=Math.max(4,Math.ceil(pdf.numPages*0.25));
+    for(let i=lines.length-1;i>=0;i--){ const l=lines[i]; if(zone(l) && seen.get(key(l)).size>=need) lines.splice(i,1); } }
+  // typical line spacing
+  const gaps=[]; for(let i=1;i<lines.length;i++) if(lines[i].page===lines[i-1].page){ const g=lines[i].y-lines[i-1].y; if(g>0) gaps.push(g); }
+  gaps.sort((a,b)=>a-b); const lineGap=gaps.length?gaps[Math.floor(gaps.length*0.3)]:14;
+  const minX=Math.min(...lines.map(l=>l.x));
+  const paras=[]; let p=null;
+  for(let i=0;i<lines.length;i++){
+    const l=lines[i], prev=lines[i-1];
+    const brk = !p || l.page!==prev.page && (Math.abs(l.x-p.x)>12 || /[.?!"')\]]$/.test(prev.text)) || (l.page===prev.page && (l.y-prev.y>lineGap*1.45)) || Math.abs(l.x-p.lastX)>12;
+    if(brk){ p={text:l.text, x:l.x, lastX:l.x}; paras.push(p); }
+    else { p.text = /[A-Za-z]-$/.test(p.text) && /^[a-z]/.test(l.text) ? p.text.slice(0,-1)+l.text : p.text+' '+l.text; p.lastX=l.x; }
+  }
+  return {kind:'pdf', hasLayout:true, mono: total>0 && mono/total>0.5, paras: paras.map(q=>({text:q.text, indent:Math.max(0,Math.round((q.x-minX)*20))}))};
+}
+// ===== Word output for PDFs (and anything without an original .docx) =====
+function xmlEsc(s){ return s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+async function buildDocx(state, Zip){
+  Zip = Zip || window.JSZip;
+  const font = (state.mono||state.screenplay) ? 'Courier New' : 'Times New Roman';
+  const rpr = `<w:rPr><w:rFonts w:ascii="${font}" w:hAnsi="${font}" w:cs="${font}"/><w:sz w:val="24"/></w:rPr>`;
+  const cue = p => p.indent>0 && (/^\(.*\)$/.test(p.text) || (p.text===p.text.toUpperCase() && /[A-Z]/.test(p.text) && p.text.length<40));
+  const notes=(typeof NOTES!=='undefined')?NOTES:[]; let cid=0, cbody='';
+  const hlr = rpr.replace('</w:rPr>','<w:highlight w:val="yellow"/></w:rPr>');
+  const runs=(p,i)=>{ if(!p.text) return ''; const ns=notes.filter(n=>n.pi===i).map(n=>({n, s:n.whole?0:n.s, e:n.whole?p.text.length:n.e, id:cid++}));
+    ns.forEach(x=>{ cbody+=commentXml(x.id,x.n.text,x.n.whole?'':x.n.quote); });
+    const pts=[...new Set([0,p.text.length,...ns.flatMap(x=>[x.s,x.e])])].sort((a,b)=>a-b); let out='';
+    for(let k=0;k<pts.length;k++){ const at=pts[k];
+      ns.filter(x=>x.e===at && x.s!==at).forEach(x=>{ out+=`<w:commentRangeEnd w:id="${x.id}"/><w:r><w:commentReference w:id="${x.id}"/></w:r>`; });
+      ns.filter(x=>x.s===at).forEach(x=>{ out+=`<w:commentRangeStart w:id="${x.id}"/>`; });
+      if(k+1<pts.length && pts[k+1]>at){ const seg=p.text.slice(at,pts[k+1]); const on=ns.some(x=>x.s<=at && x.e>=pts[k+1]); out+=`<w:r>${on?hlr:rpr}<w:t xml:space="preserve">${xmlEsc(seg)}</w:t></w:r>`; } }
+    return out; };
+  const SP=!!state.screenplay;
+  const spPara=(p,i)=>{ const r=p.role;
+    if(r==='blank'||!p.text) return '';
+    const emit=(role,text,pi)=>{ const lay={scene:{b:1,before:480,left:0,right:0},action:{before:240,left:0,right:0},cue:{before:240,left:3168,right:0,keep:1},paren:{before:0,left:2304,right:2880,keep:1},dialogue:{before:0,left:1440,right:1440},transition:{before:240,left:0,right:0,jc:'right'}}[role]||{before:240,left:0,right:0};
+      const q={text, role}; let ru=runs(q,pi); if(lay.b) ru=ru.replace(/<w:sz /g,'<w:b/><w:sz ');
+      return `<w:p><w:pPr>${lay.keep?'<w:keepNext/>':''}<w:spacing w:before="${lay.before}" w:after="0"/><w:ind w:left="${lay.left}" w:right="${lay.right}"/>${lay.jc?`<w:jc w:val="${lay.jc}"/>`:''}</w:pPr>${ru}</w:p>`; };
+    if(r==='dialogue' && p.cue){ const cue=p.cue.trim(); return emit('cue',cue,-1)+emit('dialogue',p.text.slice(p.text.indexOf(cue)+cue.length).trim()||p.text,i); }
+    return emit(r,p.text,i); };
+  const body = SP ? state.paras.map(spPara).join('') : state.paras.map((p,i)=>`<w:p><w:pPr>${p.indent?`<w:ind w:left="${p.indent}" w:right="${Math.min(p.indent,2160)}"/>`:''}<w:spacing w:after="${state.mono?0:160}"/></w:pPr>${runs(p,i)}</w:p>`
+    + (state.mono && !cue(p) && !(p.indent>0 && state.paras[i+1] && state.paras[i+1].indent>0 && /^\(/.test(state.paras[i+1].text)) ? '<w:p/>' : '')).join('');
+  const doc=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${body}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="${state.mono||SP?2160:1440}" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr></w:body></w:document>`;
+  const z=new Zip();
+  z.file('[Content_Types].xml','<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>');
+  z.file('_rels/.rels','<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>');
+  z.file('word/document.xml', doc);
+  if(cbody){ addCommentParts(z, cbody, {ct:'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>'}); }
+  return z.generateAsync({type:'blob', mimeType:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
+}
+
+
+function saveText(state){
+  return new Blob([state.paras.map(p=>p.dirty?p.text:(p.raw||p.text)).join('\n\n')],{type:'text/plain'});
+}
+
+
+</script>
+<script>
+const $=id=>document.getElementById(id);
+const SAMPLE=`SAMPLE SCRIPT. Open your own file with the button at the top.
+
+INT. MARGARET'S KITCHEN - NIGHT
+
+Margaret, seventies, stands at the window, phone pressed to her ear. Across the street, the porch light at Daniel's house flickers. She doesn't blink.
+
+MARGARET
+
+Yes, I'll hold. No, I will not calm down.
+
+DISPATCHER (V.O.)
+
+Ma'am, officers were at that address on Tuesday.
+
+MARGARET
+
+(beat)
+
+Then send them again. He's on the porch.
+
+EXT. DANIEL'S PORCH - CONTINUOUS
+
+Daniel sits in the dark. He raises a hand and waves at her window.`;
+let S=loadText(SAMPLE), cur=2, si=0, mode='idle', fileName='Sample.txt';
+let history=[], log=[], tok=0, busy=false, curSent='', prevSent='';
+let recog=null, micWanted=false, pausedIdx=-1, tainted=new Set();
+const synth=window.speechSynthesis;
+
+// ---------- rendering ----------
+function esc(s){return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+function renderPara(i){
+  const p=S.paras[i], el=$('doc').children[i]; if(!el) return;
+  const ns=(typeof NOTES!=='undefined')?notesFor(i):[];
+  el.className=(p.text?'':'empty')+(i===cur?' cur':'')+(p.dirty?' dirty':'')+(ns.length?' noted':'');
+  el.title=ns.map(n=>n.text||'Highlighted').join(' | ');
+  if(typingMode() && docDirty && $('doc').contains(document.activeElement)){ const c=caretInfo(); if(c && c.el===el) return; }
+  const t=p.text, R=[];
+  ns.forEach(n=>R.push({s:n.whole?0:n.s, e:n.whole?t.length:n.e, c:'hl'+(n.done?' done':'')}));
+  if(SEL && SEL.pi2!==undefined && i>=SEL.pi && i<=SEL.pi2) R.push({s:0,e:t.length,c:'sel'});
+  else if(SEL && SEL.pi===i) R.push({s:SEL.s,e:SEL.e,c:'sel'});
+  else if(i===cur && (mode==='reading'||mode==='paused') && t){ const sp=sentSpans(t)[si]; if(sp) R.push({s:sp[0],e:sp[1],c:'rd'}); }
+  if(!R.length){ el.textContent=t; return; }
+  const pts=[...new Set([0,t.length,...R.flatMap(r=>[r.s,r.e])])].filter(x=>x>=0&&x<=t.length).sort((a,b)=>a-b); let h='';
+  for(let k=0;k+1<pts.length;k++){ const a=pts[k], b=pts[k+1]; const cls=R.filter(r=>r.s<=a&&r.e>=b).map(r=>r.c).join(' '); const seg=esc(t.slice(a,b)); h+= cls ? '<span class="'+cls+'">'+seg+'</span>' : seg; }
+  el.innerHTML=h;
+}
+function renderAll(){
+  const d=$('doc'); d.innerHTML='';
+  S.paras.forEach((p,i)=>{ const el=document.createElement('p'); el.dataset.i=i;
+    el.addEventListener('click',()=>{ if(!S.paras[i].text || !window.getSelection().isCollapsed) return; if(typingMode()){ const old=cur; cur=i; si=caretSentence(el,i); renderPara(old); return; }
+      const was=mode; stopSpeech(); setCur(i); si=0; if(was==='reading') readOn(); else setMode('paused'); });
+    d.appendChild(el); });
+  S.paras.forEach((_,i)=>renderPara(i));
+  applyEditMode();
+}
+// ---------- mic off = type into the script; mic on (or Wispr) = voice editing ----------
+function typingMode(){ return !micWanted && !($('wispr') && $('wispr').checked); }
+function applyEditMode(){
+  const t=typingMode(); const d=$('doc');
+  if(!t && d.contains(document.activeElement)){ reconcileDoc(); document.activeElement.blur(); }
+  d.contentEditable = t ? 'true' : 'false'; d.spellcheck=t;
+  Array.from(d.children).forEach(el=>el.removeAttribute('contenteditable'));
+  d.classList.toggle('typing',t);
+  $('editmode').textContent = t ? 'Mic off: type anywhere. Select across sections, copy, cut and paste like a normal document. Enter starts a new section.' : 'Mic on: voice editing. Turn the mic off to type.';
+}
+// While typing, the page is one document. Every so often (and when you click away, read, or save)
+// it is matched back to the script's sections: changed text, sections you added with Enter or paste,
+// and sections you deleted. Each round of typing can be undone as one step.
+let docDirty=false, recTimer=null;
+function caretInfo(){ try{ const sel=window.getSelection(); if(!sel.rangeCount) return null; const r=sel.getRangeAt(0); const kids=[...$('doc').children];
+  const el=kids.find(c=>c.contains(r.startContainer)); if(!el) return null; const pre=document.createRange(); pre.selectNodeContents(el); pre.setEnd(r.startContainer,r.startOffset);
+  return {el, idx:kids.indexOf(el), off:pre.toString().length}; }catch(e){ return null; } }
+function restoreCaret(c){ if(!c) return; const el=$('doc').children[Math.min(c.idx,$('doc').children.length-1)]; if(!el) return;
+  try{ let left=c.off; const w=document.createTreeWalker(el,NodeFilter.SHOW_TEXT); let n; while((n=w.nextNode())){ if(left<=n.length){ const r=document.createRange(); r.setStart(n,left); r.collapse(true); const s=window.getSelection(); s.removeAllRanges(); s.addRange(r); return; } left-=n.length; }
+    placeCaret(el,false); }catch(e){} }
+function reconcileDoc(){
+  clearTimeout(recTimer); if(!docDirty) return; docDirty=false;
+  const caret=caretInfo(); const kids=[...$('doc').children]; const seen=new Set(); const out=[]; let structural=false;
+  // A section only splits where you pressed Enter or pasted several paragraphs. Stray line breaks the
+  // browser leaves at the start or end of a section (e.g. after deleting all its text) never create a new one.
+  kids.forEach(el=>{ const parts=(el.innerText||'').replace(/^[\s\n]+|[\s\n]+$/g,'').split(/\n+/).map(x=>x.replace(/\s+/g,' ').trim()); if(!parts.length) parts.push('');
+    const id=el.dataset.i;
+    parts.forEach((txt,k)=>{
+      if(k===0 && id!==undefined && !seen.has(id) && S.paras[+id]){ seen.add(id); out.push({p:S.paras[+id], txt}); }
+      else { structural=true; const prev=out.length?out[out.length-1].p:null;
+        out.push({p:{text:'', raw:'', dirty:true, style:prev?prev.style:'', indent:prev?prev.indent:0}, txt}); } }); });
+  if(S.paras.some((p,i)=>!seen.has(String(i)))) structural=true;
+  const changed=out.filter(o=>o.p.text!==o.txt);
+  if(!changed.length && !structural) return;
+  history.push({snap:S.paras.map(p=>({p, text:p.text, dirty:!!p.dirty})), notes:JSON.parse(JSON.stringify(NOTES)), cur});
+  const oldIdx=new Map(S.paras.map((p,i)=>[p,i])); const map={};
+  out.forEach((o,j)=>{ const was=oldIdx.get(o.p); if(was!==undefined) map[was]=j; });
+  changed.forEach(o=>{ const was=oldIdx.get(o.p); if(was!==undefined) log.unshift({sec:secNo(was), cmd:'typed', before:o.p.text, after:o.txt}); o.p.text=o.txt; o.p.dirty=true; });
+  const added=out.filter(o=>!oldIdx.has(o.p)).length, removed=S.paras.length-(out.length-added);
+  if(added) log.unshift({sec:'', cmd:'typed: '+added+' section'+(added>1?'s':'')+' added', before:'', after:''});
+  if(removed>0) log.unshift({sec:'', cmd:'typed: '+removed+' section'+(removed>1?'s':'')+' removed', before:'', after:''});
+  S.paras=out.map(o=>o.p);
+  NOTES=NOTES.filter(n=>map[n.pi]!==undefined).map(n=>{ n.pi=map[n.pi]; return n; }); NOTES.forEach(relocate); if(NOTES.length||removed) persistNotes();
+  cur = map[cur]!==undefined ? map[cur] : Math.min(cur, S.paras.length-1); SEL=null; const ss=sentences(S.paras[cur]?S.paras[cur].text:''); if(si>=ss.length) si=0;
+  renderLog();
+  if(structural){ const sc=$('doc').scrollTop; renderAll(); $('doc').scrollTop=sc; if(document.activeElement!==$('doc')) $('doc').focus({preventScroll:true}); restoreCaret(caret); }
+  else kids.forEach(el=>{ if(!caret||el!==caret.el) renderPara(+el.dataset.i); });
+  refreshTableRead();
+}
+function caretSentence(el,i){ try{ const sel=window.getSelection(); if(!sel.rangeCount) return 0; const r=document.createRange(); r.selectNodeContents(el); r.setEnd(sel.getRangeAt(0).startContainer, sel.getRangeAt(0).startOffset);
+  const off=r.toString().length; const k=sentSpans(S.paras[i].text).findIndex(([a,b])=>off>=a&&off<=b); return k<0?0:k; }catch(e){ return 0; } }
+function placeCaret(el,atStart){ try{ const r=document.createRange(); r.selectNodeContents(el); r.collapse(!!atStart); const s=window.getSelection(); s.removeAllRanges(); s.addRange(r); }catch(e){} }
+function commitTyped(i,el){
+  const before=el.dataset.before!==undefined?el.dataset.before:S.paras[i].text; delete el.dataset.before;
+  const nt=el.innerText.replace(/\s+/g,' ').trim();
+  if(nt!==before){
+    history.push([{idx:i,before}]); log.unshift({sec:secNo(i),cmd:'typed',before,after:nt});
+    S.paras[i].text=nt; S.paras[i].dirty=true; notesFor(i).forEach(relocate); if(NOTES.length) persistNotes();
+    renderLog(); refreshTableRead();
+  }
+  renderPara(i);
+}
+function setCur(i){ const old=cur; cur=i; renderPara(old); renderPara(cur);
+  const el=$('doc').children[cur]; if(el) el.scrollIntoView({block:'center',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'}); }
+function setMode(m, txt){
+  mode=m; $('status').dataset.s=m;
+  $('stxt').textContent = txt || ({idle:'Ready. Press Read.', reading:'Reading. Say "pause" to stop.', paused: micWanted?'Paused. Say "make a note ...", "go back", "go to ...", or "continue".':'Paused.'}[m]);
+  $('play').textContent = m==='reading' ? 'Pause' : (m==='paused'?'Continue':'Read');
+  renderPara(cur);
+}
+function reply(t, cls){ const r=$('reply'); r.textContent=t; r.className=cls||''; }
+
+// ---------- speech out ----------
+function voices(){
+  const v=synth.getVoices(); const sel=$('voice'); const keep=sel.value||store('voice');
+  const sorted=v.slice().sort((a,b)=>score(b)-score(a)); function score(x){ return (/natural|neural|online/i.test(x.name)?4:0)+(/^en/i.test(x.lang)?2:0)+(/en-CA|en-US/i.test(x.lang)?1:0); }
+  sel.innerHTML=''; sorted.forEach(x=>{ const o=document.createElement('option'); o.value=x.name; o.textContent=x.name.replace(/^Microsoft /,'')+' ('+x.lang+')'; sel.appendChild(o); });
+  if(keep && sorted.some(x=>x.name===keep)) sel.value=keep;
+}
+function curVoice(){ return synth.getVoices().find(x=>x.name===$('voice').value); }
+// If a voice fails (Edge's online "Natural" voices need Microsoft's service, which can be slow to wake after a restart),
+// fall back to a voice that lives on this computer, keeping the language and, where possible, the gender.
+let FORCE_LOCAL=false, speechFailures=0;
+function localList(){ return synth.getVoices().filter(x=>x.localService!==false); }
+function basicStand(v){
+  if(!v || v.localService!==false) return v;
+  const all=localList(), same=all.filter(x=>x.lang===v.lang), en=all.filter(x=>/^en/i.test(x.lang)), g=voiceGender(v);
+  const pick=l=>l.find(x=>voiceGender(x)===g)||l[0];
+  return pick(same)||pick(en)||all[0]||v;
+}
+// Built-in voices are few. The narrator keeps one of them to itself; characters share the rest, so the narrator never sounds like a character.
+let STAND={}, STANDUSE={};
+function localStandIn(v, isNarr){
+  if(!v || v.localService!==false) return v;
+  const nv=curVoice(), ns=basicStand(nv);
+  if(isNarr || v===nv) return ns;
+  if(STAND[v.name]) return STAND[v.name];
+  const all=localList().filter(x=>x!==ns), pool=all.length?all:localList(), g=voiceGender(v);
+  const same=pool.filter(x=>voiceGender(x)===g), cand=(same.length?same:pool).slice().sort((x,y)=>(STANDUSE[x.name]||0)-(STANDUSE[y.name]||0));
+  const r=cand[0]||ns; STANDUSE[r.name]=(STANDUSE[r.name]||0)+1; return STAND[v.name]=r;
+}
+function utter(text, opt){ rememberSpoken(text); const u=new SpeechSynthesisUtterance(text); u.addEventListener&&u.addEventListener('end',()=>{ lastSpeechEnd=Date.now(); }); const nv=curVoice(); let v=(opt&&opt.voice)||nv; const isNarr=(v===nv); const orig=v; let pitch=(opt&&opt.pitch)||1;
+  if(FORCE_LOCAL){ v=localStandIn(v,isNarr); if(!isNarr && v===basicStand(nv)){ const g=voiceGender(orig); pitch=g==='f'?1.25:g==='m'?0.78:0.88; } }   // only one built-in voice: set characters apart from the narrator by pitch
+  if(v){u.voice=v;u.lang=v.lang;} u.rate=+$('rate').value; u.pitch=isNarr?1:pitch; return u; }
+function stopSpeech(){ tok++; busy=false; try{ synth.cancel(); synth.resume(); }catch(e){} }
+function speechTrouble(why){
+  speechFailures++;
+  if(!FORCE_LOCAL){ FORCE_LOCAL=true; reply('The online voices aren\u2019t answering ('+why+'). Using this computer\u2019s built-in voices for now. Reload the page later to try the online ones again.','bad'); return true; }
+  reply('The computer\u2019s speech isn\u2019t responding. Close Edge completely and start Voice Editor again. Also check the sound is on and this tab isn\u2019t muted.','bad'); return false;
+}
+function say(text, then){
+  stopSpeech(); const my=tok; busy=true; const u=utter(text);
+  u.onend=()=>{ if(my!==tok) return; busy=false; then&&then(); };
+  u.onerror=ev=>{ if(my!==tok) return; busy=false; if(ev.error && ev.error!=='interrupted' && ev.error!=='canceled' && !FORCE_LOCAL){ speechTrouble(ev.error); return say(text,then); } then&&then(); };
+  synth.speak(u);
+}
+// Reading engine: speaks several sentences per utterance and keeps the next chunk
+// queued, so there is no dead air between sentences or sections.
+const CHUNK_CHARS=280, AHEAD=2;
+function readOn(){
+  reconcileDoc(); stopSpeech();
+  if(!synth.getVoices().length && !readOn._waited){ readOn._waited=true; reply('Waiting for the computer\u2019s voices to load...'); setTimeout(()=>readOn(),1500); return; }
+  readOn._waited=false; usedLen=new Map(heardLen); setMode('reading');
+  const my=tok; let gp=cur, gs=si, inFlight=0, done=false;
+  const nextChunk=()=>{
+    while(gp<S.paras.length){
+      const P=S.paras[gp];
+      if(!P.text || !speaksRole(P)){ gp++; gs=0; continue; }
+      const ss=sentences(P.text);
+      if(gs>=ss.length){ gp++; gs=0; continue; }
+      const c={pi:gp, s0:gs, offs:[], spoken:'', vopt:voiceFor(P)};
+      while(gs<ss.length && (c.offs.length===0 || c.spoken.length+ss[gs].length<=CHUNK_CHARS)){
+        c.offs.push(c.spoken.length); const sp=spokenFor(P,ss[gs]); if(sp) c.spoken+=sp+' '; gs++;
+      }
+      c.spoken=c.spoken.trim(); c.orig=ss.slice(c.s0,gs).join(' ');
+      if(!c.spoken) continue;
+      return c;
+    }
+    return null;
+  };
+  const fill=()=>{
+    if(my!==tok||mode!=='reading') return;
+    while(inFlight<AHEAD && !done){
+      const c=nextChunk(); if(!c){ done=true; break; }
+      const u=utter(c.spoken, c.vopt); inFlight++; let started=false;
+      const retryHere=why=>{ if(my!==tok) return; const again=speechTrouble(why); stopSpeech(); cur=c.pi; si=c.s0; if(again) readOn(); else setMode('paused'); };
+      let watchdog=null; const arm=()=>{ watchdog=setTimeout(()=>{ if(!started && my===tok && mode==='reading') retryHere('no sound'); }, 7000); };
+      if(inFlight===1) arm(); else u._arm=arm;
+      u.onstart=()=>{ started=true; clearTimeout(watchdog); if(my!==tok) return; prevSent=curSent; curSent=c.orig+' '+c.spoken; spokenPrevText=spokenNowText; spokenNowText=c.spoken; si=c.s0; if(cur!==c.pi) setCur(c.pi); else renderPara(cur); };
+      u.onboundary=ev=>{ if(my!==tok||typeof ev.charIndex!=='number') return; let k=0; while(k+1<c.offs.length && c.offs[k+1]<=ev.charIndex) k++; if(c.s0+k!==si){ si=c.s0+k; renderPara(cur); } };
+      const fin=ev=>{ clearTimeout(watchdog); if(my!==tok) return; if(ev && ev.error && (ev.error==='interrupted'||ev.error==='canceled')) return;
+        if(ev && ev.error){ retryHere(ev.error); return; }
+        if(u._next&&u._next._arm) u._next._arm();
+        inFlight--;
+        if(done && inFlight===0){ si=0; setMode('idle','End of document.'); return; } fill(); };
+      u.onend=fin; u.onerror=fin;
+      if(fill._last && fill._last!==u) fill._last._next=u; fill._last=u;
+      synth.speak(u);
+    }
+    if(done && inFlight===0) setMode('idle','End of document.');
+  };
+  fill();
+}
+// ----- pronunciation dictionary -----
+const DEFAULT_DICT=[
+  ['INT./EXT.','interior, exterior'],['EXT./INT.','exterior, interior'],['I/E.','interior, exterior'],
+  ['INT.','interior'],['EXT.','exterior'],['V.O.','voice over'],['O.S.','off screen'],['O.C.','off camera'],
+  ["CONT'D",'continued'],['P.O.V.','point of view'],['POV','point of view'],['SFX','sound effects'],['VFX','visual effects'],
+  ['B.G.','background'],['F.G.','foreground'],['MOS','without sound'],['SMASH CUT TO:','smash cut to.'],['CUT TO:','cut to.'],
+  ['MATCH CUT TO:','match cut to.'],['DISSOLVE TO:','dissolve to.'],['FADE IN:','fade in.'],['FADE OUT.','fade out.'],['FADE TO BLACK.','fade to black.'],
+  ['SUPER:','on screen text:'],['ECU','extreme close up'],['CU','close up'],['--',', ']
+].map(([from,to])=>({from,to}));
+let DICT=loadDict(), dictRe=null;
+function loadDict(){ try{ const d=JSON.parse(store('dict')||'null'); if(Array.isArray(d)) return d; }catch(e){} return DEFAULT_DICT.map(x=>({...x})); }
+function saveDict(){ try{ localStorage.setItem('ve_dict',JSON.stringify(DICT)); }catch(e){} dictRe=null; renderDict(); }
+function reEsc(s){ return s.replace(/[.*+?^${}()|[\]\\\/]/g,'\\$&'); }
+function speakable(t){
+  if(!dictRe){ const list=DICT.filter(d=>d.from.trim()).sort((a,b)=>b.from.length-a.from.length);
+    dictRe = list.length ? {re:new RegExp('(?<![A-Za-z0-9])(?:'+list.map(d=>reEsc(d.from.trim())).join('|')+')(?![A-Za-z0-9])','gi'), map:new Map(list.map(d=>[d.from.trim().toLowerCase(),d.to]))} : {re:null}; }
+  let s=t;
+  if($('capsfix').checked) s=s.replace(/\b[A-Z][A-Z'’]{3,}\b/g, w=>w.toLowerCase());
+  if(dictRe.re) s=s.replace(dictRe.re, m=>dictRe.map.get(m.toLowerCase()) ?? m);
+  return s;
+}
+function renderDict(){
+  $('dcount').textContent='('+DICT.length+')';
+  $('dlist').innerHTML=DICT.map((d,i)=>'<li><span class="from">'+esc(d.from)+'</span><span class="arrow">says</span><span class="to">'+esc(d.to)+'</span><button class="x" data-i="'+i+'" aria-label="Remove '+esc(d.from)+'">Remove</button></li>').join('');
+}
+function addDict(from,to){ from=from.trim(); to=to.trim(); if(!from) return false;
+  const i=DICT.findIndex(d=>d.from.toLowerCase()===from.toLowerCase()); if(i>=0) DICT[i].to=to; else DICT.unshift({from,to}); saveDict(); return true; }
+function pause(){ stopSpeech(); setMode('paused'); }
+
+// ---------- table read: screenplay roles and casting ----------
+const EXT_RE=/\s*\((?:V\.?\s?O\.?|O\.?\s?S\.?|O\.?\s?C\.?|CONT'?D|CONT\u2019D|CONTINUING|PRE-?LAP|FILTERED|ON (?:PHONE|TV|RADIO|SCREEN)|INTO PHONE|SUBTITLED|[^)]{0,20})\)\s*/gi;
+const SCENE_RE=/^(?:INT|EXT|EST|INT\.?\s*\/\s*EXT|EXT\.?\s*\/\s*INT|I\/E)[\.\s]/i;
+const TRANS_RE=/^(?:(?:SMASH |MATCH |JUMP |HARD )?CUT TO|DISSOLVE TO|FADE (?:IN|OUT|TO(?: BLACK)?)|BACK TO|INTERCUT|WIPE TO|TIME CUT)\b.*[:.]?$|[A-Z ]+TO:$/;
+function cueName(t){ const n=t.replace(EXT_RE,' ').replace(/\s+/g,' ').trim(); return n; }
+const SLUG_RE=/^[A-Z0-9 .,'#&()\/]+?\s*[-\u2013\u2014]+\s*(?:DAY|NIGHT|MORNING|EVENING|AFTERNOON|DAWN|DUSK|LATER|CONTINUOUS|MOMENTS LATER|SAME(?: TIME)?|SUNSET|SUNRISE|MIDNIGHT|NOON|EARLIER|TWILIGHT)(?:\b.*)?$/;
+const TIMEWORD_RE=/^(?:DAY|NIGHT|MORNING|EVENING|AFTERNOON|DAWN|DUSK|LATER|CONTINUOUS|SUNSET|SUNRISE|MIDNIGHT|NOON|EARLIER|TWILIGHT|INT|EXT)$/;
+const NOTCUE_RE=/^(?:THE END|END OF|FADE|CUT|DISSOLVE|SMASH|MATCH|CONTINUED|CONT'D|MORE|TITLE|SUPER|CHYRON|INSERT|BLACK|ANGLE|CLOSE|WIDE|FLASH ?BACK|BACK TO|MONTAGE|SERIES OF|INTERCUT|RESUME|SUBTITLE|OMITTED|ACT\b|TEASER|COLD OPEN|EPISODE|CHAPTER|WRITTEN BY|BY\s+\S|DRAFT|REVISED|COPYRIGHT|PAGE\b)/;
+// "23 INT. MILLBROOK DINER - DAY 23", "23INT. ...", "int Millbrook Diner", "MILLBROOK DINER - NIGHT": all scene headings
+function isSceneText(t){
+  const a=(t||'').trim(); if(!a) return false;
+  const lead=a.replace(/^\d{1,3}[A-Z]?[\s.\-)]*(?=(?:INT|EXT|EST|I\/E)\b)/i,'');
+  if(SCENE_RE.test(lead) || /^(?:INT|EXT|EST|I\/E)\b[\s.\/-]/i.test(lead)) return true;
+  const core=lead.replace(/[\s.\-]*\d{1,3}[A-Z]?$/,'').trim();
+  return a===a.toUpperCase() && SLUG_RE.test(core);
+}
+function isCueText(t){
+  if(!t || t.length>45 || isSceneText(t) || TRANS_RE.test(t)) return false;
+  const n=cueName(t); if(!n || n.length>32) return false;
+  if(NOTCUE_RE.test(n)) return false;
+  if(/^\d/.test(n) || /\d{2,}/.test(n)) return false;                      // page numbers, scene numbers, "JIM DAY 23"
+  { const tk=n.split(' '); if(tk.length>1 && TIMEWORD_RE.test(tk[tk.length-1])) return false; } // "JIM - DAY", "JIM DAY": a slug fragment, not a speaker
+  return /[A-Z]/.test(n) && n===n.toUpperCase() && /^[A-Z0-9 .'\u2019#&\-]+$/.test(n) && !/[.!?:]$/.test(n.replace(/\b(?:DR|MR|MRS|MS|ST|JR|SR)\.$/,'X'));
+}
+function classify(){
+  const P=S.paras; let char=null, prev=null; const counts=new Map();
+  const st=p=>(p.style||'').toLowerCase().replace(/\s+/g,'');
+  const nextText=i=>{ for(let k=i+1;k<P.length;k++) if(P[k].text) return P[k]; return null; };
+  // Everything before the first scene heading is the title page: titles and author names there are not speakers.
+  const firstScene=P.findIndex(p=>p.text && (/sceneheading|slugline|^heading/.test(st(p)) || isSceneText(p.text)));
+  P.forEach((p,i)=>{
+    p.role='action'; p.char=null; p.cue=null;
+    const t=p.text; if(!t){ p.role='blank'; if(!S.hasLayout) { /* blank-line formats: a blank ends dialogue only after the dialogue */ } return; }
+    const s=st(p);
+    if(/sceneheading|slugline|^heading/.test(s) || isSceneText(t)){ p.role='scene'; char=null; }
+    else if(/transition/.test(s) || (t===t.toUpperCase() && TRANS_RE.test(t))){ p.role='transition'; char=null; }
+    else if(/^character/.test(s) || (!s.includes('dialog') && isCueText(t) && (()=>{ if(firstScene>=0 && i<firstScene) return false; const n=nextText(i); return n && !isSceneText(n.text) && !isCueText(n.text) && (S.hasLayout ? (n.indent||0)>0 || /dialog|parenth/.test(st(n)) : true); })())){
+      p.role='cue'; char=cueName(t); p.char=char; }
+    else if(char && (/parenth/.test(s) || /^\(.*\)$/.test(t))){ p.role='paren'; p.char=char; }
+    else if(char && (/dialog/.test(s) || (S.hasLayout ? (p.indent||0)>0 && !/action|general/.test(s) : (prev && ['cue','paren'].includes(prev.role))))){
+      p.role='dialogue'; p.char=char; counts.set(char,(counts.get(char)||0)+1); }
+    else if(!S.hasLayout && p.raw && /\n/.test(p.raw.trim()) && isCueText(p.raw.trim().split('\n')[0].trim())){
+      // Fountain-style: name on its own line, dialogue directly under it
+      const first=p.raw.trim().split('\n')[0].trim(); char=cueName(first); p.role='dialogue'; p.char=char; p.cue=p.text.slice(0,p.text.indexOf(first)+first.length);
+      counts.set(char,(counts.get(char)||0)+1); char=null; }
+    else { p.role='action'; char=null; }
+    prev=p;
+  });
+  S.cast=[...counts.entries()].sort((a,b)=>b[1]-a[1]).map(([name,lines])=>({name,lines}));
+}
+// Voice gender guesses from voice names (Edge, Windows, Chrome).
+const FEMALE_V=/\b(Hedda|Katja|Sylvia|Jessica|Kate|Serena|Stella|Lucy|Eva|Aria|Jenny|Michelle|Ana|Emma|Ava|Clara|Sonia|Libby|Maisie|Natasha|Zira|Hazel|Linda|Heather|Susan|Catherine|Samantha|Karen|Moira|Tessa|Fiona|Victoria|Female|Sara|Nancy|Jane|Amber|Ashley|Cora|Elizabeth|Monica|Leah|Molly|Emily|Joanna|Salli|Kimberly|Ivy|Kendra|Ruth|Olivia|Amy|Neerja|Rosa|Yan|Mia|Bella|Hollie|Abbi|Elsie|Annette|Freya|Jessa|Imani|Ezinne|Asilia|Luna|Nova|Shimmer)\b/i;
+const MALE_V=/\b(Pavel|Fred|Eddy|Reed|Rocko|Grandpa|Guy|Christopher|Eric|Roger|Steffan|Andrew|Brian|Liam|Ryan|Thomas|William|David|Mark|Richard|George|James|Male|Davis|Jason|Tony|Brandon|Jacob|Daniel|Alfie|Oliver|Prabhat|Connor|Mitchell|Ken|Kai|Luke|Matthew|Joey|Justin|Kevin|Stephen|Arthur|Gordon|Aaron|Ralph|Albert|Rishi|Tom|Elliot|Ethan|Noah|Darren|Duncan|Neil|Ken|Sean|Abeo|Chilemba|Wayne|Tim|Fable|Onyx|Echo)\b/i;
+function voiceGender(v){ return FEMALE_V.test(v.name)?'f':MALE_V.test(v.name)?'m':'?'; }
+// Character gender: first from the name or title (GRACE, BETH, MOTHER, WAITRESS), then from the pronouns around the name.
+const FEM_WORDS=new Set(('mother mom mum mama mommy mommie mrs ms miss madam madame maam lady woman girl grandma grandmother granny nana gran aunt auntie aunty sister nun queen princess duchess countess baroness waitress actress hostess stewardess policewoman congresswoman chairwoman businesswoman saleswoman daughter wife girlfriend bride widow mistress heroine goddess female niece mrs. ms. '+
+ 'grace beth mary anna ann anne annie emma emily olivia sophia sophie isabella isabel mia charlotte amelia harper evelyn abigail ella elizabeth liz lizzie sofia scarlett victoria madison luna chloe penelope layla zoe zoey nora lily eleanor hannah lillian addison aubrey ellie stella natalie leah hazel violet aurora savannah audrey brooklyn bella claire lucy paisley everly caroline nova emilia samantha maya willow naomi aaliyah elena sarah sara ariana allison gabriella alice madelyn cora ruby eva serenity autumn adeline hailey gianna valentina isla eliana nevaeh ivy sadie piper lydia alexa josephine emery julia delilah arianna vivian kaylee brielle madeline rylee clara hadley melanie mackenzie reagan liliana jade katherine kate katie kathryn kathy catherine cathy margaret maggie meg megan peggy patricia patty linda barbara barb susan sue jessica jennifer jenny jen karen nancy betty helen sandra donna carol ruth sharon michelle laura kimberly kim deborah debbie dorothy amy angela melissa brenda pamela nicole rebecca becky stephanie rachel janet maria heather diane julie joyce christina joan lauren judith cheryl andrea jacqueline martha gloria teresa janice marie kathleen jean doris tiffany priya rosa connie anjali neha pooja meera lakshmi divya kavya yuki mei ling fatima aisha leila zara nadia olga natasha katya irina svetlana ingrid greta sigrid astrid carmen lucia marta paula rosario dolores beatriz camila valeria daniela fiona moira siobhan aoife niamh bridget brigid maeve colleen erin deirdre gwen gwendolyn rhonda tammy wanda vera edith edna ethel florence gladys irene mabel mildred minnie myrtle pearl phyllis thelma agnes bertha blanche bonnie carla cindy crystal darlene denise dawn felicia gina holly jill joanne joy kristen krista kristin lisa lori lorraine marilyn marcia monica nina regina renee roberta rose roxanne sally shirley tina trudy valerie vanessa veronica wendy yvonne louise lois lena mona nell nellie polly rosalind rosemary sylvia tanya tara tess tessa vicky winnie zelda ashley amanda brittany courtney danielle diana eileen elaine ellen faith felicity gabrielle georgia hilary imogen isobel jane janie jodie joanna josie judy julianne june kayla kendra lana lara latoya leona lilly lindsay lola lorna lucille lynda mallory marge marjorie marlene maureen meredith miranda molly nadine nanette naomi nikki noelle olive pauline phoebe rita robyn rochelle sabrina selena shelly sheila sherry simone sonia sonya stacey suzanne sylvie tabitha tamara teri toni trish vivienne whitney yasmin zoe').split(/\s+/));
+const MALE_WORDS=new Set(('father dad daddy papa pop pops mr mister sir gentleman man boy grandpa grandfather gramps granddad uncle brother monk king prince duke count baron waiter actor host steward policeman congressman chairman businessman salesman fireman son husband boyfriend groom widower hero god male nephew priest friar '+
+ 'tom thomas michael daniel john jack james jim jimmy jimbo joe joey joseph josh joshua jordan(u) david dave dan danny mark matt matthew mike mick mickey luis lou louis luke lucas liam noah oliver william will bill billy bob robert rob roberts rick richard dick rich ricky harold harry henry hank hal gordon walt walter wally lonnie lenny leonard leo leon larry gary greg gregory george geoff jeff jeffrey jerry jason jay jake jacob jesse(u) ben benjamin bruce brian bryan brad brandon brett carl charles chuck chad chris(u) christopher craig curtis dale dean dennis derek don donald doug douglas drew(u) duncan ed eddie edward edwin elliot eric ernest ethan evan felix frank fred freddie gabe gabriel gene glen glenn gus guy hector howard hugh ian isaac ivan jackson jared jasper jesus jonah jon jonathan juan julian justin keith ken kenneth kevin kyle lance lawrence lee(u) lewis lloyd logan marcus marco mario martin marvin max maxwell miguel milton mitch mitchell morgan(u) nathan nate neil nick nicholas noel norman oscar otto owen pablo patrick paul pedro percy pete peter phil philip ralph randy ray raymond reggie rex rich rocky rod rodney roger ron ronald ross roy russ russell ryan sam(u) samuel scott sean sergio seth shane sid sidney simon stan stanley stephen steve steven stuart ted teddy terry(u) tim timothy toby todd tony travis trevor troy tyler victor vince vincent wade warren wayne wesley wilbur willie wyatt zach zachary abe abraham adam adrian alan albert alec alexander alfred alvin andre andrew andy angelo anthony archie arnold arthur austin barry bart bernard bert bill blake bobby boris brent bret byron cal calvin cameron(u) carlos cecil cesar clarence clark claude clay clayton clifford clint clyde cody colin connor corey cory cyrus dwight earl eli elijah elmer emmett enzo ernie eugene floyd francis franklin gareth garrett gavin gerald gerard gilbert gideon graham grant griffin harvey herbert herman homer horace hunter irving jacques jamal jamie(u) jerome jerrod joel jules karl kirk kurt lamar leroy lester levi lincoln linus lyle malcolm manny manuel marshall mason maurice melvin morris murray nelson nolan orlando orville pat(u) perry preston quentin ramon randall reid reuben rhys riley(u) robbie rolf roman ronnie rufus rupert sal salvador santiago saul sebastian shaun sheldon silas spencer sterling tobias tommy tucker ulysses vern vernon vlad waldo wendell wilbert wilfred winston woody xavier yuri zane').replace(/\([a-z]\)/g,'').split(/\s+/));
+const UNISEX_WORDS=new Set('dana alex sam jordan taylor casey jamie pat chris morgan riley avery quinn drew jesse jessie kerry lee robin sandy terry tracy stacy kelly jackie leslie shannon skylar peyton kennedy cameron charlie lynn'.split(' '));
+function nameGender(name){
+  const toks=name.toLowerCase().replace(/\([^)]*\)/g,' ').replace(/[^a-z' ]/g,' ').split(/\s+/).filter(Boolean);
+  for(const tk of toks){ const w=tk.replace(/'s$/,'');
+    if(UNISEX_WORDS.has(w)) return '?u';
+    if(FEM_WORDS.has(w)) return 'f';
+    if(MALE_WORDS.has(w)) return 'm'; }
+  return '?';
+}
+function charGender(name){
+  const ng=nameGender(name); if(ng==='f'||ng==='m') return ng;
+  if(/^(?:ALL|EVERYONE|EVERYBODY|BOTH|CROWD|CHORUS|VOICES|GROUP|OTHERS|TOGETHER|MEN|WOMEN|CHILDREN|KIDS|AUDIENCE|TV|RADIO|ANNOUNCER|PA|SPEAKER|COMPUTER|AI|MACHINE|ROBOT)\b/i.test(name.trim())) return '?';
+  const first=name.split(/\s+/)[0]; if(first.length<2) return '?';
+  const re=new RegExp('\\b'+first.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\b','i'); let f=0,m=0;
+  S.paras.forEach(p=>{ if(p.role!=='action'||!re.test(p.text)) return;
+    sentences(p.text).forEach((s,k,arr)=>{ if(!re.test(s)) return; const w=(s+' '+(arr[k+1]||'')).toLowerCase();
+      f+=2*(w.match(/\bshe\b/g)||[]).length+(w.match(/\b(her|hers|herself)\b/g)||[]).length; m+=2*(w.match(/\bhe\b/g)||[]).length+(w.match(/\b(him|his|himself)\b/g)||[]).length; }); });
+  return f>m?'f':m>f?'m':'?';
+}
+const PITCHES=[1,0.88,1.12,0.94,1.06,0.82,1.18];
+const PITCH_F=[1,1.1,0.96,1.16,1.04,0.92], PITCH_M=[1,0.88,1.06,0.82,0.94,1.1];
+function pitchFor(g,n){ const a=g==='f'?PITCH_F:g==='m'?PITCH_M:PITCHES; return a[n%a.length]; }
+let CAST={};
+function castKey(){ return 'cast:'+fileName; }
+function loadCast(){ try{ CAST=JSON.parse(store(castKey())||'{}')||{}; }catch(e){ CAST={}; } }
+function saveCast(){ try{ localStorage.setItem('ve_'+castKey(),JSON.stringify(CAST)); }catch(e){} }
+function autoCast(force){
+  const all=synth.getVoices(); const en=all.filter(v=>/^en/i.test(v.lang)); const pool=(en.length?en:all).slice()
+    .sort((a,b)=>(/natural|neural|online/i.test(b.name)?1:0)-(/natural|neural|online/i.test(a.name)?1:0));
+  if(!pool.length) return;
+  if(force) CAST={};
+  const narr=$('voice').value; const used=new Map(); pool.forEach(v=>used.set(v.name,0)); if(used.has(narr)) used.set(narr,1e6);
+  const names=new Set((S.cast||[]).map(c=>c.name)); Object.keys(CAST).forEach(k=>{ if(!names.has(k)) delete CAST[k]; });
+  // Keep earlier choices that still fit: a voice you picked yourself always stays; an automatic one stays only if its sex matches the name.
+  (S.cast||[]).forEach(c=>{ const e=CAST[c.name]; if(!e) return; const v=pool.find(x=>x.name===e.voice);
+    const g=charGender(c.name), vg=v?voiceGender(v):'?';
+    if(v && v.name===narr && pool.length>1) delete CAST[c.name];   // the narrator's voice is reserved for the narrator
+    else if(v && (e.manual || g==='?' || vg==='?' || g===vg)) used.set(v.name,(used.get(v.name)||0)+1); else delete CAST[c.name]; });
+  (S.cast||[]).forEach(c=>{
+    if(CAST[c.name]) return;
+    const g=charGender(c.name);
+    let cand = g==='?' ? pool : pool.filter(v=>voiceGender(v)===g);       // a woman gets a woman's voice, a man a man's
+    if(!cand.length) cand = pool.filter(v=>voiceGender(v)==='?');
+    if(!cand.length) cand = pool;
+    if(pool.length>1){ let nc=cand.filter(v=>v.name!==narr); if(!nc.length) nc=pool.filter(v=>v.name!==narr); cand=nc; }
+    cand = cand.slice().sort((a,b)=>used.get(a.name)-used.get(b.name));
+    const v=cand[0]; const n=used.get(v.name); used.set(v.name,n+1);
+    CAST[c.name]={voice:v.name, pitch:pitchFor(g,n)};
+  });
+  saveCast();
+}
+function voiceFor(p){
+  if(!$('tr').checked) return null;
+  if(p.role!=='dialogue' || !p.char || !CAST[p.char]) return {voice:curVoice(), pitch:1};   // narrator / stage manager: scene headings, action, transitions, parentheticals
+  const c=CAST[p.char]; return {voice:synth.getVoices().find(v=>v.name===c.voice), pitch:c.pitch||1};
+}
+function speaksRole(p){
+  if(!$('tr').checked) return true;
+  return {scene:$('tr_scene').checked, action:$('tr_action').checked, transition:$('tr_trans').checked, paren:$('tr_paren').checked, cue:false, dialogue:true, blank:false}[p.role] ?? true;
+}
+function spokenFor(p, sentence){
+  let s=sentence;
+  if($('tr').checked){
+    if(p.cue && s.startsWith(p.cue)) s=s.slice(p.cue.length);
+    if(p.role==='dialogue' && !$('tr_paren').checked) s=s.replace(/\([^)]*\)/g,' ');
+  }
+  return speakable(s).replace(/\s+/g,' ').trim();
+}
+function renderCast(){
+  const box=$('castlist'); const vs=synth.getVoices(); const en=vs.filter(v=>/^en/i.test(v.lang)); const list=(en.length?en:vs);
+  if(!S.cast||!S.cast.length){ box.innerHTML='<li class="note">No characters found. Table read works on screenplays: names in capitals above their lines.</li>'; return; }
+  const nv=(curVoice()||{}).name||''; const nrow='<li><div class="cname">Narrator <span>stage manager: scene headings, action, transitions</span></div><div class="note" style="margin:0">'+esc(nv.replace(/^Microsoft /,'').replace(/ Online \(Natural\)/,''))+' (the main Voice at the top)</div></li>';
+  box.innerHTML=nrow+S.cast.map((c,i)=>{ const cur=CAST[c.name]||{};
+    return '<li><div class="cname">'+esc(c.name)+' <span>'+c.lines+' line'+(c.lines>1?'s':'')+'</span></div>'
+      +'<select data-c="'+i+'" aria-label="Voice for '+esc(c.name)+'">'+list.map(v=>'<option value="'+esc(v.name)+'"'+(v.name===cur.voice?' selected':'')+'>'+esc(v.name.replace(/^Microsoft /,'').replace(/ Online \(Natural\)/,''))+' ('+v.lang+')</option>').join('')+'</select>'
+      +'<select data-p="'+i+'" aria-label="Pitch for '+esc(c.name)+'">'+[['0.82','Lower'],['0.9','Low'],['1','Normal'],['1.1','High'],['1.2','Higher']].map(([v,l])=>'<option value="'+v+'"'+(Math.abs((cur.pitch||1)-v)<0.05?' selected':'')+'>'+l+'</option>').join('')+'</select>'
+      +'<button type="button" data-t="'+i+'">Hear</button></li>'; }).join('');
+}
+function refreshTableRead(){ classify(); autoCast(false); renderCast(); renderRoles(); }
+function renderRoles(){ const on=$('tr').checked; S.paras.forEach((p,i)=>{ const el=$('doc').children[i]; if(!el) return; el.dataset.role=on?p.role:''; el.dataset.muted=on && !speaksRole(p) && p.text ? '1':''; }); }
+
+// ---------- highlights and notes ----------
+const NOTE_AUTHOR='Brian Burke', NOTE_INITIALS='BB';
+let NOTES=[], notePending=null;
+function notesFor(i){ return NOTES.filter(n=>n.pi===i); }
+function sentSpans(text){ const out=[]; let pos=0; for(const s of sentences(text)){ const at=text.indexOf(s,pos); const a=at<0?pos:at; out.push([a,a+s.length]); pos=a+s.length; } return out; }
+function capFirst(t){ t=t.trim(); return t ? t[0].toUpperCase()+t.slice(1) : t; }
+function notesKey(){ return 'notes:'+fileName; }
+function persistNotes(){ try{ localStorage.setItem('ve_'+notesKey(), JSON.stringify(NOTES.map(n=>({...n, snip:(S.paras[n.pi]||{text:''}).text.slice(0,60)})))); }catch(e){} renderNotes(); }
+function relocate(n){ if(n.whole) return; const t=S.paras[n.pi].text; const k=t.indexOf(n.quote); if(k>=0){ n.s=k; n.e=k+n.quote.length; } else n.whole=true; }
+function loadNotes(){
+  NOTES=[]; notePending=null;
+  try{ (JSON.parse(store(notesKey())||'[]')||[]).forEach(n=>{ let pi=n.pi;
+    if(!S.paras[pi] || !S.paras[pi].text.startsWith(n.snip||'')) pi=S.paras.findIndex(p=>p.text && p.text.startsWith(n.snip||'\u0000'));
+    if(pi>=0){ n.pi=pi; relocate(n); NOTES.push(n); } }); }catch(e){}
+  renderNotes();
+}
+function prevIdx(i){ let k=i-1; while(k>=0 && !S.paras[k].text) k--; return Math.max(0,k); }
+function addHighlight(c){
+  let pi=cur, s=0, e=0, whole=true;
+  if(c.target!=='phrase'){ const tg=rewriteTarget({unit:c.target, which:c.scope}); if(!tg) return null;
+    if(tg.block){ let first=null; for(let i=tg.pi;i<=tg.pi2;i++){ if(!S.paras[i].text) continue;
+        const n={id:Date.now().toString(36)+Math.random().toString(36).slice(2,6)+i, pi:i, s:0, e:S.paras[i].text.length, whole:true, quote:'', text:'', done:false}; NOTES.push(n); first=first||n; }
+      persistNotes(); for(let i=tg.pi;i<=tg.pi2;i++) renderPara(i); return first; }
+    pi=tg.pi; s=tg.s; e=tg.e; whole=tg.whole; }
+  else {
+    let found=null;
+    for(const i of searchOrder(S.paras,cur,c.scope)){ const sp=findSpan(S.paras[i].text,c.phrase); if(sp){ found={i,sp}; break; } }
+    if(!found) return null; pi=found.i; s=found.sp.s; e=found.sp.e; whole=false;
+  }
+  const t=S.paras[pi].text;
+  const n={id:Date.now().toString(36)+Math.random().toString(36).slice(2,6), pi, s, e, whole, quote:whole?'':t.slice(s,e), text:'', done:false};
+  NOTES.push(n); persistNotes(); renderPara(pi); flash(pi); return n;
+}
+function renderNotes(){
+  const list=NOTES.slice().sort((a,b)=>a.pi-b.pi||a.s-b.s);
+  $('ncount').textContent=list.length?'('+list.length+')':'';
+  $('notes').innerHTML = list.length ? list.map(n=>{ const t=S.paras[n.pi].text; const q=n.whole ? t.slice(0,90)+(t.length>90?'...':'') : n.quote;
+    return '<li class="'+(n.done?'done':'')+'" data-n="'+n.id+'"><div class="sec">Section '+secNo(n.pi)+' · <span class="q">'+esc(q)+'</span></div>'
+      +'<div class="ntext" contenteditable="true" data-placeholder="No note yet. Click to type one." aria-label="Note text">'+esc(n.text)+'</div>'
+      +'<div class="nrow"><button type="button" data-go>Go to</button><label class="small"><input type="checkbox" data-done'+(n.done?' checked':'')+'> Done</label><button type="button" data-rm>Remove</button></div></li>'; }).join('')
+    : '<li class="note">Nothing highlighted yet. While paused, say "highlight this" and then your note.</li>';
+}
+function goNote(dir){
+  const list=NOTES.slice().sort((a,b)=>a.pi-b.pi||a.s-b.s);
+  const n = dir>0 ? list.find(x=>x.pi>cur) : list.slice().reverse().find(x=>x.pi<cur);
+  if(!n){ say(dir>0?'No more notes after this.':'No notes before this.'); return; }
+  stopSpeech(); setCur(n.pi); si=0; setMode('paused'); say((n.text?'Note: '+n.text:'Highlighted, no note.'));
+}
+function noteHandle(c, raw){
+  if(c.type==='highlight'){
+    const n=addHighlight(c);
+    if(!n){ beep(); reply('Couldn’t find "'+c.phrase+'" near here.','bad'); say("Couldn't find that."); return; }
+    if(c.note){ n.text=capFirst(spokenPunct(c.note)); persistNotes(); renderPara(n.pi); reply('Highlighted with your note.','good'); say('Noted.'); return; }
+    notePending=n; reply('Highlighted. Say your note, or "no note".','good'); say("Highlighted. What's the note?"); return;
+  }
+  if(c.type==='note'){
+    let n=notesFor(cur).find(x=>!x.text) || addHighlight({target:'para'});
+    n.text=capFirst(spokenPunct(c.note)); persistNotes(); renderPara(n.pi); reply('Note added.','good'); say('Noted.'); return;
+  }
+  if(c.type==='unnote'){
+    const k=NOTES.length; NOTES=NOTES.filter(n=>n.pi!==cur); persistNotes(); renderPara(cur);
+    say(k>NOTES.length?'Removed.':'There is no note here.'); return;
+  }
+  if(c.type==='nextnote') return goNote(1);
+  if(c.type==='prevnote') return goNote(-1);
+  if(c.type==='readnote'){ const ns=notesFor(cur); say(ns.length? ns.map(n=>n.text||'Highlighted, no note.').join(' Next note: ') : 'There is no note here.'); return; }
+}
+function finishPendingNote(text){
+  const n=notePending; notePending=null; lastNoteAt=Date.now();
+  const low=text.toLowerCase().trim().replace(/[.!?]+$/,'');
+  if(/^(?:no note|no|nope|skip|nothing|never mind|nevermind|cancel|none|that's it|just highlight(?: it)?)$/.test(low)){ reply('Highlighted.','good'); say('Okay.'); return; }
+  if(/^(?:continue|resume|keep going|carry on|go on|keep reading)$/.test(low)){ readOn(); return; }
+  n.text=capFirst(spokenPunct(text.replace(/^(?:note|the note is|comment)[:,]?\s+/i,''))); persistNotes(); renderPara(n.pi);
+  reply('Note added.','good'); say('Noted. Say continue when ready.');
+}
+// ----- Word comments -----
+function commentXml(id, text, quote){
+  const body = (quote ? '“'+quote+'”: ' : '') + (text || 'Highlighted for review.');
+  return `<w:comment w:id="${id}" w:author="${xmlEsc(NOTE_AUTHOR)}" w:date="${new Date().toISOString().slice(0,19)}Z" w:initials="${NOTE_INITIALS}"><w:p><w:r><w:t xml:space="preserve">${xmlEsc(body)}</w:t></w:r></w:p></w:comment>`;
+}
+const COMMENTS_REL='http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments';
+const COMMENTS_CT='application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml';
+function addCommentParts(zip, commentsBody, orig){
+  let cx = orig.comments || '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"></w:comments>';
+  cx = cx.replace(/<\/w:comments>\s*$/, commentsBody+'</w:comments>').replace(/<w:comments([^>]*)\/>\s*$/, '<w:comments$1>'+commentsBody+'</w:comments>');
+  zip.file('word/comments.xml', cx);
+  let rels = orig.rels || '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>';
+  if(!rels.includes(COMMENTS_REL)) rels=rels.replace('</Relationships>','<Relationship Id="rIdVEcomments" Type="'+COMMENTS_REL+'" Target="comments.xml"/></Relationships>');
+  zip.file('word/_rels/document.xml.rels', rels);
+  let ct = orig.ct; if(!/comments\.xml/.test(ct)) ct=ct.replace('</Types>','<Override PartName="/word/comments.xml" ContentType="'+COMMENTS_CT+'"/></Types>');
+  zip.file('[Content_Types].xml', ct);
+}
+
+// ---------- navigation by voice ----------
+const NUMW={a:1,an:1,one:1,two:2,to:2,too:2,three:3,four:4,for:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,couple:2,'a couple':2,'a couple of':2,few:3,'a few':3,several:4};
+function numOf(w){ if(!w) return 1; w=w.toLowerCase().trim(); return NUMW[w] || parseInt(w,10) || 1; }
+function linePositions(){ const out=[]; S.paras.forEach((p,i)=>{ if(!p.text||!speaksRole(p)) return; sentences(p.text).forEach((s,k)=>out.push({pi:i,k})); }); return out; }
+function curPos(L){ let j=L.findIndex(x=>x.pi===cur&&x.k===si); if(j<0){ j=L.findIndex(x=>x.pi>cur||(x.pi===cur&&x.k>=si)); if(j<0) j=L.length-1; } return Math.max(0,j); }
+function sayLine(){
+  const p=S.paras[cur]; if(!p||!p.text) return; const sent=sentences(p.text)[si]||p.text;
+  stopSpeech(); const my=tok; busy=true; const u=utter(spokenFor(p,sent), voiceFor(p)||undefined);
+  spokenPrevText=spokenNowText; spokenNowText=spokenFor(p,sent);
+  u.onend=u.onerror=()=>{ if(my!==tok) return; busy=false; }; synth.speak(u);
+}
+function landOn(pi,k,quiet){ unsel(); stopSpeech(); setCur(pi); si=k; setMode('paused'); renderPara(cur); updateCtxEstimate(); if(!quiet) sayLine(); }
+function navLines(n){ const L=linePositions(); if(!L.length) return; const j=Math.max(0,Math.min(L.length-1,curPos(L)+n)); landOn(L[j].pi,L[j].k); }
+function navSections(n){ const idx=S.paras.map((p,i)=>i).filter(i=>S.paras[i].text&&speaksRole(S.paras[i])); if(!idx.length) return;
+  let j=idx.findIndex(i=>i>=cur); if(j<0) j=idx.length-1; if(n<0 && idx[j]===cur && si>0 && n===-1){ landOn(cur,0); return; }
+  j=Math.max(0,Math.min(idx.length-1,j+n)); landOn(idx[j],0); }
+function unsel(){ if(!SEL) return; const a=SEL.pi, b=SEL.pi2===undefined?a:SEL.pi2; SEL=null; for(let i=a;i<=b;i++) renderPara(i); }
+function sceneStarts(){ return S.paras.map((p,i)=>i).filter(i=>S.paras[i].role==='scene'); }
+function navScenes(n){ const sc=sceneStarts(); if(!sc.length){ say('There are no scene headings here.'); return; }
+  let j=sc.filter(i=>i<=cur).length-1; if(n<0 && j>=0 && sc[j]!==cur) n+=1; j=Math.max(0,Math.min(sc.length-1,j+n)); landOn(sc[j],0); }
+function findLine(kind, phrase){
+  const order=[]; for(let i=cur;i>=0;i--) order.push(i); for(let i=cur+1;i<S.paras.length;i++) order.push(i);
+  if(kind!=='char'){
+    for(const i of order){ const p=S.paras[i]; if(!p.text||!speaksRole(p)) continue; const sp=findSpan(p.text,phrase); if(!sp) continue;
+      const spans=sentSpans(p.text); let k=spans.findIndex(([a,b])=>sp.s>=a&&sp.s<b); if(k<0) k=0;
+      if(i===cur && k>si && kind!=='starts') { /* prefer lines already heard */ }
+      if(kind==='starts' && Math.abs(sp.s-spans[k][0])>2) continue;
+      return {pi:i,k}; }
+  }
+  const name=phrase.replace(/['’]s$/i,'').trim().toUpperCase();
+  for(const i of order){ const p=S.paras[i]; if(p.role==='dialogue' && p.char && (p.char===name || p.char.split(' ')[0]===name.split(' ')[0])) return {pi:i,k:0}; }
+  return null;
+}
+function parseNav(s, low){
+  let m;
+  if(/^(?:go\s+|jump\s+)?back\s+(?:to\s+)?(?:here|this spot|this place|this point|this line|where i was|where we were|where i am|where we are|the spot|where i stopped|where i paused)$/.test(low) || /^(?:return|come back|get back|jump back)\s+(?:to\s+)?(?:here|this spot|this place|where i was|where we were)$/.test(low)) return {type:'nav', unit:'hereland'};
+  if(/^(?:back|go back|back up|previous|previous line|go back a line|back a line|up|up one)$/.test(low)) return {type:'nav', unit:'line', n:-1};
+  if(/^(?:next|next line|forward|go forward|skip|skip it|skip this|skip that|down|down one)$/.test(low)) return {type:'nav', unit:'line', n:1};
+  if((m=low.match(/^(?:go\s+|move\s+|jump\s+)?(back|backward|backwards|up|forward|forwards|ahead|down|on|skip|skip ahead|skip forward)\s+(a|an|one|two|to|too|three|four|for|five|six|seven|eight|nine|ten|\d+|a couple(?: of)?|a few|several)?\s*(lines?|sentences?|sections?|paragraphs?|scenes?|speeches)$/))){
+    const dir=/back|up/.test(m[1])?-1:1; const unit=/scene/.test(m[3])?'scene':/section|paragraph|speech/.test(m[3])?'section':'line';
+    return {type:'nav', unit, n:dir*numOf(m[2])}; }
+  if(/^(?:previous|last|back a|back one|go back a|go to the previous|go to the last) (?:section|paragraph|speech)$/.test(low)) return {type:'nav', unit:'section', n:-1};
+  if(/^(?:next|forward a|go to the next) (?:section|paragraph|speech)$/.test(low)) return {type:'nav', unit:'section', n:1};
+  if(/^(?:previous|last|back a|go back a|go to the previous|go to the last) scene$/.test(low)) return {type:'nav', unit:'scene', n:-1};
+  if(/^(?:next|go to the next) scene$/.test(low)) return {type:'nav', unit:'scene', n:1};
+  if(/^(?:go (?:back )?to |back to )?the (?:start|beginning|top) of (?:the|this) (?:section|paragraph|speech)$/.test(low)) return {type:'nav', unit:'section', n:0};
+  if(/^(?:go (?:back )?to |back to )?the (?:start|beginning|top) of (?:the|this) scene$/.test(low)) return {type:'nav', unit:'scene', n:0};
+  if(/^(?:go (?:back )?to |back to )?the (?:start|beginning|top)(?: of the (?:script|document|book|file))?$/.test(low)) return {type:'nav', unit:'top'};
+  if(/^(?:go to )?the end(?: of the (?:script|document|book|file))?$/.test(low)) return {type:'nav', unit:'end'};
+  if(/^(?:where am i|read this line|read the line|what line is this|where are we)$/.test(low)) return {type:'nav', unit:'here'};
+  if((m=s.match(/^(?:select|pick|grab|choose|get(?!\s+rid)|locate)\s+(.+)$/i))) return {type:'select', loc:parseLocator(m[1])};
+  if((m=s.match(/^(?:go|jump|move|skip|take me|back|head)\s+(?:back\s+)?(?:over\s+)?to\s+(.+)$/i)) || (m=s.match(/^(?:find|search for|look for)\s+(.+)$/i))){
+    let r=m[1].trim().replace(/[.!?]+$/,'').replace(/^(?:or\s+)?(?:go|jump|move|skip|head|take me)\s+(?:back\s+)?(?:over\s+)?to\s+/i,'');
+    if(/^(?:the\s+)?(?:next|previous|last)\s+(?:note|highlight)$/i.test(r)) return null;
+    if(/^(?:the\s+)?(?:start|beginning|top|end)\b/i.test(r)) return null;
+    return {type:'goto', loc:parseLocator(r)};
+    let cm=r.match(/^(.+?)['’]s\s+(?:last\s+|previous\s+)?(?:line|speech|dialogue)$/i); if(cm) return {type:'goto', kind:'char', phrase:cm[1].replace(/^the\s+/i,'')};
+    r=r.replace(/^(?:the\s+)?(?:line|sentence|bit|part|place|section|spot|one)\s*/i,'').replace(/^(?:that|which|where|with)\s+/i,'');
+    let sm=r.match(/^(?:starts|begins|starting|beginning|start|begin)\s+with\s+(.+)$/i); if(sm) return {type:'goto', kind:'starts', phrase:sm[1]};
+    sm=r.match(/^(?:says|said|has|have|contains|containing|mentions|reads|talks about)\s+(.+)$/i); if(sm) return {type:'goto', kind:'contains', phrase:sm[1]};
+    return {type:'goto', kind:'contains', phrase:r};
+  }
+  return null;
+}
+// ---------- spelling, sound-alike words and synonyms ----------
+// Speech recognition can't hear the difference between "high" and "hi", so: spell it ("H I"),
+// or ask for "the other spelling", or just say "change high to hi" and the app works out you meant the other word.
+const HOMOPHONES=[['high','hi'],['there','their',"they're"],['to','too','two'],['your',"you're"],['its',"it's"],['here','hear'],['know','no'],['write','right','rite'],['by','buy','bye'],['weather','whether'],['then','than'],['affect','effect'],['whose',"who's"],['sea','see'],['for','four','fore'],['knew','new'],['peace','piece'],['aloud','allowed'],['brake','break'],['mail','male'],['meat','meet'],['one','won'],['our','hour'],['sun','son'],['tail','tale'],['wait','weight'],['week','weak'],['wood','would'],['which','witch'],['through','threw'],['plain','plane'],['road','rode'],['sale','sail'],['steal','steel'],['waste','waist'],['wear','where'],['ate','eight'],['flour','flower'],['hole','whole'],['made','maid'],['pair','pear'],['pause','paws'],['principal','principle'],['stationary','stationery'],['course','coarse'],['allowed','aloud'],['died','dyed'],['heal','heel'],['heard','herd'],['loan','lone'],['missed','mist'],['passed','past'],['poor','pour','pore'],['rain','reign','rein'],['scene','seen'],['sole','soul'],['some','sum'],['tied','tide'],['toe','tow'],['vain','vein','vane'],['way','weigh'],['wore','war'],['yoke','yolk'],['bare','bear'],['dear','deer'],['fair','fare'],['grate','great'],['hair','hare'],['higher','hire'],['hymn','him'],['idle','idol'],['lead','led'],['nose','knows'],['oh','owe'],['real','reel'],['ring','wring'],['seam','seem'],['so','sew','sow'],['stair','stare'],['tea','tee'],['wade','weighed'],['wail','whale'],['whine','wine'],['you','ewe'],['yore','your']];
+function homophoneOf(w){
+  const lw=w.toLowerCase().replace(/[\u2019]/g,"'"); const g=HOMOPHONES.find(x=>x.includes(lw)); if(!g) return null;
+  return matchCase(w, g[(g.indexOf(lw)+1)%g.length]);
+}
+// "H I" -> "Hi", "F B I" -> "FBI". Only when the whole replacement is spelled out letter by letter.
+function joinSpelled(text, old){
+  const t=text.trim().replace(/[.,]+$/,'').replace(/[\s,]+(?:in\s+)?(?:all caps|capitals|capital letters|uppercase|upper case)$/i,''); if(!/^(?:[A-Za-z](?:[\s.\-]+|$)){2,}$/.test(t+' ')) return null;
+  const w=t.replace(/[^A-Za-z]/g,''); if(w.length<2) return null;
+  if(/\b(?:all caps|capitals|uppercase)\b/i.test(text) || (old && old===old.toUpperCase() && old.length>1)) return w.toUpperCase();
+  return matchCase(old||'x', w.toLowerCase());
+}
+function wordSpanNear(word){ return regionFind(word); }
+function regionFind(word){
+  word=cleanOld(word); if(!tokens(word).length) return null;
+  const regions=[];
+  if(SEL) regions.push({pi:SEL.pi, s:SEL.s, e:SEL.e});
+  if(S.paras[cur] && S.paras[cur].text){ const sp=sentSpans(S.paras[cur].text)[si]; if(sp) regions.push({pi:cur, s:sp[0], e:sp[1]}); regions.push({pi:cur, s:0, e:S.paras[cur].text.length}); }
+  for(const i of searchOrder(S.paras,cur,'near')) regions.push({pi:i, s:0, e:S.paras[i].text.length});
+  for(const r of regions){ const t=S.paras[r.pi].text.slice(r.s,r.e); const sp=findSpan(t, word); if(sp) return {pi:r.pi, s:r.s+sp.s, e:r.s+sp.e, phrase:true}; }
+  return null;
+}
+function replaceSpan(f, nw, text){ const t=S.paras[f.pi].text; return finishEdit(single(S.paras, f.pi, tidy(t.slice(0,f.s)+nw+t.slice(f.e))), text); }
+function parseSpelling(s){
+  let m;
+  // "spell it H I", "spell high H I", "it's spelled H I", "change high to H I" (handled in change)
+  if((m=s.match(/^(?:spell|spelled|it's spelled|its spelled|spelling)\s+(?:(it|that|this|the word\s+\S+|\S+)\s+)?(?:as\s+)?((?:[A-Za-z](?:[\s.\-]+|$)){2,})$/i))){
+    let who=(m[1]||'it').replace(/^the word\s+/i,''); if(/^(?:as)$/i.test(who)) who='it';
+    return {type:'spell', who, letters:m[2]}; }
+  if((m=s.match(/^(?:(?:use |make it |change it to |change that to )?the other spelling(?: of)?|wrong spelling(?: of)?|fix the spelling of|homophone(?: for)?|other word for|sound-?alike for)\s*(.*)$/i)))
+    return {type:'homophone', who:(m[1]||'it').trim()||'it'};
+  if((m=s.match(/^(?:give me |what's |what is |find |suggest )?(?:a |another |some )?(?:synonyms?|better words?|another word|different words?|alternatives?)\s+(?:for\s+)?(.+)$/i)))
+    return {type:'synonym', who:m[1].trim()};
+  return null;
+}
+function spellTarget(who){
+  if(/^(?:it|that|this|the selection|selection)$/i.test(who)){
+    if(SEL) return {pi:SEL.pi, s:SEL.s, e:SEL.e, phrase:true};
+    const tg=rewriteTarget({unit:'sentence', which:'this'}); if(!tg) return null;
+    const t=S.paras[tg.pi].text; const first=t.slice(tg.s,tg.e).match(/[A-Za-z'\u2019]+/); if(!first) return null;
+    return {pi:tg.pi, s:tg.s+first.index, e:tg.s+first.index+first[0].length, phrase:true};
+  }
+  return wordSpanNear(who);
+}
+function spellHandle(c, text){
+  if(c.type==='synonym'){
+    const tg=spellTarget(c.who); if(!tg){ beep(); reply('Couldn\u2019t find "'+c.who+'".','bad'); return; }
+    SEL={pi:tg.pi, s:tg.s, e:tg.e, phrase:true}; setCur(tg.pi); renderPara(tg.pi);
+    const w=S.paras[tg.pi].text.slice(tg.s,tg.e);
+    askClaude('Give me a better word or phrase for "'+w+'" here. Put your best choice as the REPLACEMENT, and mention one or two alternatives in a sentence.');
+    return;
+  }
+  const tg=spellTarget(c.who); if(!tg){ beep(); reply('Couldn\u2019t find "'+c.who+'".','bad'); say("Couldn't find that."); return; }
+  const old=S.paras[tg.pi].text.slice(tg.s,tg.e);
+  let nw = c.type==='spell' ? joinSpelled(c.letters, old) : homophoneOf(old);
+  if(!nw){ beep(); reply(c.type==='spell'?'Spell it one letter at a time, like "H I".':'I don\u2019t know another spelling of "'+old+'". Spell it instead, like "spell it H I".','bad'); say(c.type==='spell'?'Spell it one letter at a time.':"I don't know another spelling of that. Try spelling it."); return; }
+  const t=S.paras[tg.pi].text;
+  return finishEdit(single(S.paras, tg.pi, t.slice(0,tg.s)+nw+t.slice(tg.e)), text);
+}
+
+// ---------- selecting things in plain words ----------
+let SEL=null; // {pi,s,e,phrase}
+function cleanSpoken(t){
+  // Wispr and the mic add writerly punctuation: quotes around the words, commas after "the sentence", a final period.
+  return t.trim()
+    .replace(/(^|\s)[\u2018'"\u201C]+/g,'$1').replace(/[\u2019'"\u201D]+(?=\s|$|[.,!?;:])/g,'')
+    .replace(/^((?:the\s+)?(?:sentence|line|bit|part|piece|phrase|words?|section|paragraph|speech|spot|place|one|passage)(?:\s+(?:that|which|where)\s+(?:says|reads|starts with|begins with|has))?)\s*[,:;\-]+\s*/i,'$1 ')
+    .replace(/^(?:the\s+)?(?:sentence|line|bit|part|piece|phrase|words?|section|paragraph|speech|spot|place|one|passage)\s*$/i, m=>m)
+    .replace(/[\s,;:]+$/,'').replace(/[.!?]+$/,'').trim();
+}
+function wordsToNum(s){ s=String(s).toLowerCase().trim(); if(/^\d+$/.test(s)) return +s;
+  const U={zero:0,one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,eleven:11,twelve:12,thirteen:13,fourteen:14,fifteen:15,sixteen:16,seventeen:17,eighteen:18,nineteen:19}, T={twenty:20,thirty:30,forty:40,fifty:50,sixty:60,seventy:70,eighty:80,ninety:90};
+  let n=0, ok=false; for(const w of s.split(/[\s-]+/)){ if(w in U){ n+=U[w]; ok=true; } else if(w in T){ n+=T[w]; ok=true; } else if(w==='hundred'){ n=(n||1)*100; ok=true; } else if(w!=='and') return null; } return ok?n:null; }
+function namesIn(str){
+  const tk=str.toLowerCase().replace(/[^a-z0-9' ]/g,' ').split(/\s+/).filter(Boolean); const out=[];
+  const STOP=new Set(['the','a','an','is','are','was','were','to','with','and','talking','speaking','arguing','chatting','fighting','says','of','in','at','on','between','his','her','their','that','this','i','it']);
+  for(let i=0;i<tk.length;i++){ if(STOP.has(tk[i])) continue; let nm=null, used=1;
+    if(i+1<tk.length && !STOP.has(tk[i+1])){ nm=findCharacter(tk[i]+' '+tk[i+1]); if(nm) used=2; }
+    if(!nm) nm=findCharacter(tk[i]); if(nm && !out.includes(nm)) out.push(nm); i+=used-1; }
+  return out;
+}
+function parseLocator(r0){
+  let r=cleanSpoken(r0);
+  { let m;
+    if((m=r.match(/^(?:the\s+)?scene\s+(?:number\s+|no\.?\s*|#\s*)?(\d+|[a-z-]+(?:\s+[a-z-]+)?)$/i)) && wordsToNum(m[1])!==null) return {kind:'scene', n:wordsToNum(m[1])};
+    if((m=r.match(/^(?:the\s+)?scene\s+(?:at|in|with|where|called|named|for|of|set (?:at|in)|that takes place (?:at|in))\s+(.+)$/i))) return {kind:'scene', phrase:m[1].replace(/^the\s+/i,'')};
+    if(/^(?:this|that|the current|the whole|the entire|this whole|that whole|the full)\s+scene$/i.test(r)) return {kind:'block', scene:true};
+    if((m=r.match(/^(?:the\s+|that\s+|this\s+)?(?:whole\s+|entire\s+|full\s+)?(?:section|part|bit|exchange|conversation|dialogue|dialog|discussion|talk|argument|passage|stretch|scene)\s+(?:where|in which|with|when|between|of)\s+(?!.*\b(?:says|said|say|asks|asked|tells|told)\b)(.+)$/i))){
+      const names=namesIn(m[1]); if(names.length) return {kind:'block', names}; }
+    if((m=r.match(/^what\s+(.+?)\s+(?:says|said)\s+(?:about\s+)?(.+)$/i))
+       || (m=r.match(/^(?:the\s+)?(?:(?:line|sentence|part|bit|place|spot|moment|speech|section)\s+)?(?:where|when|that|in which)?\s*(.+?)(?:['\u2019]s)?\s+(?:(?:line|speech)\s+)?(?:(?:that|where|which)\s+)?(?:says|said|say|asks|asked|tells|told|replies|replied|answers|answered|mentions|talks about)\s+(?:that\s+|this\s*[:,]?\s*|about\s+)?(.+)$/i))){
+      const nm=findCharacter(m[1].replace(/^(?:the\s+)/i,'')); if(nm) return {kind:'contains', phrase:m[2], unit:'sentence', who:nm}; } }
+  const tg=parseTarget(r); if(tg) return {kind:'target', tg};
+  let m;
+  if((m=r.match(/^(.+?)['\u2019]s\s+(?:last\s+|previous\s+)?(?:line|speech|dialogue)$/i))) return {kind:'char', phrase:m[1].replace(/^the\s+/i,'')};
+  const UNIT='(sentence|line|bit|part|piece|phrase|words?|section|paragraph|speech|spot|place|one|passage)';
+  const unitOf=u=>!u?'sentence':/section|paragraph|speech|passage/i.test(u)?'para':/bit|part|piece|phrase|word|spot|place/i.test(u)?'phrase':'sentence';
+  if((m=r.match(new RegExp('^(?:the\\s+)?'+UNIT+'?\\s*(?:that|which|where|that\'s|which is)?\\s*(?:starts?|begins?|starting|beginning|opens?|opening)\\s+(?:with|at|on|by)\\s+(.+)$','i'))))
+    return {kind:'starts', phrase:m[2], unit:unitOf(m[1])==='phrase'?'sentence':unitOf(m[1])};
+  if((m=r.match(new RegExp('^(?:the\\s+)?'+UNIT+'\\s+(?:that|which|where|with|that\'s|which is)?\\s*(?:says|said|reads|has|have|with|contains|containing|mentions|goes|talks about|about)?\\s*(.+)$','i'))))
+    return {kind:'contains', phrase:m[2], unit:unitOf(m[1])};
+  if((m=r.match(/^(?:where (?:it|she|he|they) says|where it reads)\s+(.+)$/i))) return {kind:'contains', phrase:m[1], unit:'phrase'};
+  return {kind:'contains', phrase:r, unit:'phrase'};
+}
+function resolveLocator(loc){
+  if(loc.kind==='target'){ const t=rewriteTarget(loc.tg); if(!t) return null; const k=Math.max(0,sentSpans(S.paras[t.pi].text).findIndex(([a,b])=>t.s>=a&&t.s<b)); return {pi:t.pi, s:t.s, e:t.e, k, phrase:!!t.phrase}; }
+  const order=[]; for(let i=cur;i>=0;i--) order.push(i); for(let i=cur+1;i<S.paras.length;i++) order.push(i);
+  if(loc.kind==='char'){ const f=findLine('char',loc.phrase); if(!f) return null; const t=S.paras[f.pi].text; return {pi:f.pi, s:0, e:t.length, k:0}; }
+  if(loc.kind==='scene'){ const sc=sceneStarts(); let pi;
+    if(loc.n!==undefined){ pi=sc.find(i=>{ const m=S.paras[i].text.match(/^\s*(\d+)[A-Z]?\b/)||S.paras[i].text.match(/(\d+)[A-Z]?\s*$/); return m && +m[1]===loc.n; }); if(pi===undefined) pi=sc[loc.n-1]; }
+    else { let best=null; sc.forEach(i=>{ const sp=findSpan(S.paras[i].text.replace(/^\s*\d+\s*/,''),loc.phrase); if(sp){ const rk=sp.score*100-Math.abs(i-cur)*0.002; if(!best||rk>best.rk) best={i,rk}; } }); pi=best?best.i:undefined; }
+    if(pi===undefined) return null; return {pi, s:0, e:S.paras[pi].text.length, k:0}; }
+  if(loc.kind==='block') return resolveBlock(loc);
+  for(const strict of (loc.who?[true,false]:[false])){ let hit=null;
+    for(const i of order){ const p=S.paras[i]; if(!p.text) continue; if(strict && !(p.role==='dialogue' && p.char===loc.who)) continue; const sp=findSpan(p.text,loc.phrase); if(!sp) continue;
+      const spans=sentSpans(p.text); let k=spans.findIndex(([a,b])=>sp.s>=a&&sp.s<b); if(k<0) k=0;
+      if(loc.kind==='starts' && Math.abs(sp.s-spans[k][0])>2) continue;
+      const rank=sp.score*100 - Math.min(Math.abs(i-cur),5000)*0.002 - (p.role==='cue'?5:0); // exact beats fuzzy; nearer beats farther; a character cue is the last choice
+      if(!hit || rank>hit.rank) hit={i,p,sp,spans,k,rank}; }
+    if(hit){ const {i,p,sp,spans,k}=hit;
+      if(loc.unit==='para') return {pi:i, s:0, e:p.text.length, k:0};
+      if(loc.unit==='phrase') return {pi:i, s:sp.s, e:sp.e, k, phrase:true};
+      return {pi:i, s:spans[k][0], e:spans[k][1], k}; } }
+  // Nothing close enough: take the best partial match in the whole document, if it's clearly the one.
+  const f=fuzzyFind(loc.phrase, loc.kind==='starts');
+  if(f){ const p=S.paras[f.pi]; const spans=sentSpans(p.text); let k=spans.findIndex(([a,b])=>f.s>=a&&f.s<b); if(k<0) k=0;
+    if(loc.unit==='para') return {pi:f.pi, s:0, e:p.text.length, k:0};
+    if(loc.unit==='phrase') return {pi:f.pi, s:f.s, e:f.e, k, phrase:true};
+    return {pi:f.pi, s:spans[k][0], e:spans[k][1], k}; }
+  return null;
+}
+function fuzzyFind(phrase, atStart){
+  const pt=tokens(phrase).map(t=>t.w); const n=pt.length; if(n<3) return null;
+  let best=null, second=0;
+  S.paras.forEach((p,i)=>{ if(!p.text) return; const dt=tokens(p.text);
+    const starts = atStart ? new Set(sentSpans(p.text).map(([a])=>a)) : null;
+    for(let a=0;a<dt.length;a++){ if(atStart && ![...starts].some(x=>Math.abs(x-dt[a].s)<=2)) continue;
+      for(const m of [n-2,n-1,n,n+1,n+2]){ if(m<2||a+m>dt.length) continue; const win=dt.slice(a,a+m);
+        const sc=lcs(pt,win)/Math.max(n,m) - (Math.abs(i-cur)*0.0005);
+        if(!best||sc>best.sc){ if(best && best.pi!==i) second=Math.max(second,best.sc); best={pi:i,s:win[0].s,e:win[m-1].e,sc}; } else if(i!==best.pi) second=Math.max(second,sc); } } });
+  return best && best.sc>=0.5 && best.sc-second>=0.08 ? best : null;
+}
+function selectLoc(loc, verb){
+  const f=resolveLocator(loc);
+  if(!f){ beep(); reply('Couldn\u2019t find '+(loc.phrase?'"'+loc.phrase+'"':'that')+'.','bad'); say("Couldn't find that."); return false; }
+  if(f.block){ unsel(); SEL={pi:f.pi, pi2:f.pi2, s:0, e:f.e, phrase:false}; stopSpeech(); setCur(f.pi); si=0; setMode('paused');
+    for(let i=f.pi;i<=f.pi2;i++) renderPara(i);
+    const n=S.paras.slice(f.pi,f.pi2+1).filter(p=>p.text).length;
+    reply('Selected '+n+' lines (sections '+secNo(f.pi)+' to '+secNo(f.pi2)+'). Say "change it to ...", "delete it", "highlight it" or "continue".','good'); say('Selected that section. '+n+' lines.'); return true; }
+  unsel(); SEL={pi:f.pi, s:f.s, e:f.e, phrase:!!f.phrase};
+  stopSpeech(); setCur(f.pi); si=f.k; setMode('paused'); renderPara(f.pi); updateCtxEstimate();
+  const txt=S.paras[f.pi].text.slice(f.s,f.e);
+  reply((verb==='go'?'Found it':'Selected')+'. Say "change it", "change it to ...", "remove it", "highlight it" or "continue".','good');
+  stopSpeech(); const my=tok; busy=true; const p=S.paras[f.pi]; const u=utter(spokenFor(p,txt), voiceFor(p)||undefined);
+  spokenPrevText=spokenNowText; spokenNowText=spokenFor(p,txt); u.onend=u.onerror=()=>{ if(my!==tok) return; busy=false; }; synth.speak(u);
+  return true;
+}
+// "go to the bit that says the damp skirt and change it to this" -> two commands, run in order
+function splitCompound(t){
+  t=t.replace(FILLER,'');
+  { // "go to scene 15, and that whole section where the foreman is talking to Daniel, I want to change that to this"
+    const g=t.match(/^((?:go|jump|move|find|take me|head)\b.*?)[,;]?\s+and\s+(?:then\s+)?((?:that|the|this)\s+(?:whole\s+|entire\s+)?(?:section|part|bit|exchange|conversation|dialogue|dialog|discussion|argument|passage|scene|line|sentence)\b.*)$/i);
+    if(g) return [g[1], ...splitCompound(g[2])];
+    const tail=t.match(/^((?:that|the|this)\s+.*?)[,;]?\s+(?:and\s+)?(?:then\s+)?(?:i\s+(?:want|need|would like|'d like|wanna)\s+to\s+|please\s+)?(change|replace|rewrite|reword|delete|remove|cut|highlight|mark|flag)\s+(?:that|it|this|those|them)(?:\s+(?:to|with|into|as)\s+(.+))?$/i);
+    if(tail){ const lk=parseLocator(tail[1]).kind; if(lk==='block'||lk==='scene'||(lk==='contains'&&parseLocator(tail[1]).who)) return ['select '+tail[1], tail[2]+' it'+(tail[3]?' to '+tail[3]:'')]; }
+    const lead=t.match(/^(change|replace|rewrite|reword|delete|remove|cut|highlight|mark|flag)\s+(.+)$/i);
+    if(lead){ const body=lead[2]; const re=/\s+(?:to|with|into|as)\s+/gi; let x, cut=[body.length,'']; const tries=[[body,'']]; if(/^(?:change|replace|rewrite|reword)$/i.test(lead[1])) while((x=re.exec(body))){ const pre=body.slice(0,x.index); if(!/(?:talking|speaking|arguing|chatting|fighting|talks|speaks|conversation|argument|dialogue|exchange)\s*$/i.test(pre)) tries.push([pre, body.slice(x.index+x[0].length)]); }
+      for(const [loc,txt] of tries.slice(1).reverse().concat([tries[0]])){ const L=parseLocator(loc); if(L.kind==='block'||L.kind==='scene') return ['select '+loc, lead[1]+' it'+(txt?' to '+txt:'')]; } } }
+  { const pm=t.match(/^(pause|stop|hold on|wait|hang on)[,.]?\s+(?:and\s+)?(?:then\s+)?(?:now\s+)?((?:go|jump|move|find|search|look|select|pick|grab|choose|take|get|locate|highlight|change|replace|rewrite|reword|delete|remove|cut|make|note|read|back|next|skip|undo|continue|ask|claude)\b.*)$/i);
+    if(pm) return [pm[1], ...splitCompound(pm[2])]; }
+  const parts=t.split(/\s*,?\s+(?:and then|and|then)\s+(?=(?:change|replace|rewrite|reword|make|delete|remove|cut|get rid of|highlight|note|read|select|fix|swap|ask claude|claude)\b)/i);
+  return parts.length>1 && /^(?:go|jump|move|find|select|pick|grab|choose|take|get|locate|highlight)\b/i.test(parts[0]) ? parts : [t];
+}
+// ---------- Claude works out commands phrased differently ----------
+const CMD_GUIDE=`Translate what the writer said into commands for his Voice Editor. Reply with one command per line, using ONLY these forms, nothing else. If it is not a command at all, reply NONE.
+pause | continue | undo | save | repeat | where am I
+back N lines | forward N lines | previous section | next section | previous scene | next scene | start of the scene | go to the top | go to the end
+go to the line that starts with WORDS | go to the line with WORDS | go to NAME's line
+select this line | select this section | select the last line | select the last section
+select the sentence that starts with WORDS | select the sentence with WORDS | select the section with WORDS | select the words WORDS
+change it to NEWTEXT | change it   (when he will dictate the new text next)
+change this line to NEWTEXT | change this section to NEWTEXT | change the last line to NEWTEXT
+change OLDWORDS to NEWWORDS | change OLDWORDS to NEWWORDS everywhere
+remove it | remove this line | remove the last line | remove WORDS
+add WORDS after WORDS | add WORDS before WORDS | add WORDS at the end
+highlight it | highlight this line | highlight this section | highlight it note NOTETEXT | note NOTETEXT
+read the note | remove the note | next note | previous note
+Claude, QUESTION   (when he is asking for an opinion, advice or ideas)
+pronounce WORD as SOUND
+spell it LETTERS | spell WORD LETTERS | the other spelling of WORD | synonym for WORD
+Rules: "it" and "that" mean what he just selected or the line he is on. Keep his WORDS exactly as he said them. If he says "this" for the new text, use "change it" so he can dictate it.`;
+async function interpretWithClaude(text){ if(BASIC) return false;
+  if(!$('cinterp').checked || !['cli','api','sample'].includes(CLAUDE_MODE) || text.length>400 || tokens(text).length<4) return false;
+  $('stxt').textContent='Working out what you meant...';
+  try{
+    const ctx='The line he is on: '+(sentences(S.paras[cur].text||'')[si]||'')+(SEL?'\nHe has selected: '+S.paras[SEL.pi].text.slice(SEL.s,SEL.e):'');
+    const r=await fetch('/api/ask',{method:'POST',headers:{'Content-Type':'application/json','X-Voice-Editor':'1'},
+      body:JSON.stringify({model:'haiku', system:CMD_GUIDE, messages:[{role:'user',content:ctx+'\n\nHe said: '+text}], prompt:CMD_GUIDE+'\n\n'+ctx+'\n\nHe said: '+text})});
+    const j=await r.json(); if(!j.ok) throw new Error(j.error);
+    const cmds=(j.text||'').split(/\n+/).map(x=>x.replace(/^[-*\d.)\s]+/,'').trim()).filter(x=>x && !/^none$/i.test(x));
+    const SAFE=['change','rewrite','delete','insert','append','highlight','note','select','goto','spell','homophone','synonym','dict','ask','readnote','unnote','nextnote','prevnote'];
+    const usable=cmds.filter(c=>!/\.exe\b|permission|error|exception|\bat [A-Z]:\\/i.test(c) && SAFE.includes(parseCommand(c).type)).slice(0,3);
+    if(!usable.length){ setMode(mode); return false; }
+    $('heard').textContent='Understood as: '+usable.join(' / ');
+    usable.forEach(c=>handle(c, true)); return true;
+  }catch(e){ setMode(mode); return false; }
+}
+function navHandle(c){
+  if(c.unit==='hereland'){ landOn(cur,si); return; }
+  if(c.type==='goto' && c.loc){ selectLoc(c.loc,'go'); return; }
+  if(c.type==='goto'){ const f=findLine(c.kind,c.phrase); if(!f){ beep(); reply('Couldn’t find "'+c.phrase+'".','bad'); say("Couldn't find that."); return; } reply('Found it. Say "change this line", "highlight this line", or "continue".','good'); landOn(f.pi,f.k); return; }
+  if(c.unit==='line') return navLines(c.n);
+  if(c.unit==='section') return c.n===0 ? landOn(cur,0) : navSections(c.n);
+  if(c.unit==='scene') return navScenes(c.n);
+  if(c.unit==='top'){ const L=linePositions(); if(L.length) landOn(L[0].pi,L[0].k); return; }
+  if(c.unit==='end'){ const L=linePositions(); if(L.length) landOn(L[L.length-1].pi,L[L.length-1].k); return; }
+  if(c.unit==='here'){ setMode('paused'); sayLine(); return; }
+}
+
+// ---------- Ask Claude ----------
+let CLAUDE_MODE='unknown', convo=[], lastSuggestion=null, asking=false;
+async function claudeStatus(){
+  if(location.protocol==='file:') CLAUDE_MODE='file';
+  else { try{ const r=await fetch('/api/claude-status',{headers:{'X-Voice-Editor':'1'}}); CLAUDE_MODE=r.ok?((await r.json()).mode||'none'):'old'; }catch(e){ CLAUDE_MODE='offline'; } }
+  const msg={ cli:['good','Connected through Claude Code. Questions count against your Claude plan\u2019s usage limits.'], api:['good','Connected with your API key. Questions use your plan\u2019s monthly API credits, not your chat allowance.'],
+    none:['bad','Not set up yet: put your API key in anthropic_key.txt in the Voice Editor folder, then restart Voice Editor. Everything else works without it.'],
+    file:['bad','Open Voice Editor with "Start Voice Editor" to use this.'], old:['bad','Restart Voice Editor with this version’s "Start Voice Editor".'], offline:['bad','The Voice Editor window is closed. Start it again.'] }[CLAUDE_MODE]||['',''];
+  $('cmode').textContent=msg[1]; $('cmode').className='note '+msg[0];
+}
+function sceneRange(){
+  const sc=sceneStarts(); let a,b;
+  if(sc.length){ a=sc.filter(i=>i<=cur).pop(); if(a===undefined) a=0; b=sc.find(i=>i>cur); if(b===undefined) b=S.paras.length; }
+  else { a=Math.max(0,cur-6); b=Math.min(S.paras.length,cur+7); }
+  return [a,b];
+}
+function excerpt(scope){
+  let [a,b] = scope==='script' ? [0,S.paras.length] : scope==='section' ? [cur,cur+1] : sceneRange();
+  const lines=[];
+  for(let i=a;i<b;i++){ const p=S.paras[i]; if(!p.text) continue; let t=p.text;
+    if(i===cur){ const sp=sentSpans(t)[si]; if(sp) t=t.slice(0,sp[0])+'>>> '+t.slice(sp[0],sp[1])+' <<<'+t.slice(sp[1]); }
+    lines.push(p.role==='dialogue'?'    '+t : p.role==='paren'?'      '+t : p.role==='cue'?'          '+t : t); }
+  let x=lines.join('\n\n');
+  if(scope!=='script' && x.length>14000){ const k=x.indexOf('>>> '); x=x.slice(Math.max(0,k-7000), k+7000); }
+  return x;
+}
+function updateCtxEstimate(){ const el=$('cest'); if(!el) return; const n=Math.round((excerpt($('cscope').value).length+900)/4); el.textContent='About '+n.toLocaleString()+' tokens per question'; }
+async function askClaude(q, opts){ if(BASIC){ reply('Ask Claude is switched off in this edition.'); return; }
+  opts=opts||{}; q=(q||'').trim(); if(!q) return;
+  if(!['cli','api'].includes(CLAUDE_MODE)){ await claudeStatus(); if(!['cli','api'].includes(CLAUDE_MODE)){ reply($('cmode').textContent,'bad'); say('Ask Claude is not connected yet.'); return; } }
+  if(asking) return; asking=true; stopSpeech(); if(mode==='reading') setMode('paused');
+  const unit=/\b(?:section|paragraph|speech|scene|whole)\b/i.test(q)?'para':'sentence';
+  const tg=opts.tg || (SEL ? rewriteTarget({unit:'sel'}) : rewriteTarget({unit, which:'this'})); const target=opts.target || (tg?S.paras[tg.pi].text.slice(tg.s,tg.e):'');
+  // A real conversation: the script excerpt sits in the system prompt (cached, so repeat questions cost less),
+  // and earlier questions and answers go back as proper turns.
+  const system=['You are a sharp, experienced script and manuscript editor working with the writer, Brian Burke, while he listens to his own draft read aloud in his Voice Editor. He talks to you out loud and your answers are read aloud to him, so keep them short and plain: usually two to five sentences, no lists, headings or markdown unless he asks for them. Be honest and specific; he wants real critique, not praise. Never use em dashes or en dashes; use two hyphens instead.',
+    'Whenever you propose new wording for the line or section he is asking about, end your answer with the exact new text on its own final line, starting with "REPLACEMENT: ". Always include that line when you suggest wording, even if you also mention it in your answer. Give only one REPLACEMENT.',
+    'You cannot edit the document yourself. Never say you have applied, made or saved a change. The app applies your REPLACEMENT when he says "use that" or "apply it"; you may end by asking whether he wants it.',
+    'Document: '+fileName+'\nExcerpt ('+$('cscope').selectedOptions[0].textContent.toLowerCase()+'). The line he was hearing when he asked is marked >>> <<<:\n\n'+excerpt($('cscope').value)].join('\n\n');
+  const turn=(unit==='para' ? 'The section I mean:\n'+target : 'The line I mean: '+target)+'\n\n'+q;
+  const messages=[]; convo.filter(x=>!x.pending&&!x.err).slice(-6).forEach(x=>{ messages.push({role:'user',content:x.turn||x.q}); messages.push({role:'assistant',content:x.raw||x.a}); });
+  messages.push({role:'user',content:turn});
+  const prompt=system+'\n\n'+messages.map(m=>(m.role==='user'?'Brian: ':'You: ')+m.content).join('\n\n');
+  const item={q, turn, a:'', pending:true, tg, target, quiet:!!opts.autoApply}; convo.push(item); renderConvo();
+  reply('Asking Claude...'); $('stxt').textContent='Asking Claude...';
+  try{
+    const r=await fetch('/api/ask',{method:'POST',headers:{'Content-Type':'application/json','X-Voice-Editor':'1'},body:JSON.stringify({system, messages, prompt, model:$('cmodel').value})});
+    const j=await r.json(); if(!j.ok) throw new Error(j.error||'No answer came back.');
+    let text=(j.text||'').replace(/\u2014|\u2013/g,'--').trim(); item.raw=text;
+    const rm=text.match(/(?:^|\n)\s*\**REPLACEMENT:?\**\s*([\s\S]+)$/i); let sugg=null;
+    if(rm){ sugg=rm[1].trim().replace(/^["“]|["”]$/g,''); text=text.slice(0,rm.index).trim(); }
+    item.a=text; item.sugg=sugg; item.pending=false;
+    lastSuggestion = sugg && tg ? {tg, original:target, text:sugg, item} : null;
+    if(opts.autoApply){ renderConvo(); setMode('paused'); if(lastSuggestion) useSuggestion(); else { reply('Claude didn\u2019t give new wording to apply.','bad'); say("Claude didn't give new wording to apply."); } return; }
+    renderConvo(); setMode('paused'); reply(sugg?'Claude answered with a suggestion. Say "use that" to apply it.':'Claude answered.','good');
+    if($('caloud').checked) say(text + (sugg ? ' Suggested: '+speakable(sugg).replace(/[.\s]+$/,'')+'. Say use that to apply it.' : ''));
+  }catch(e){ item.a='Error: '+e.message; item.pending=false; item.err=true; renderConvo(); beep(); reply(e.message,'bad'); }
+  finally{ asking=false; }
+}
+function useSuggestion(){
+  const s=lastSuggestion;
+  if(!s){
+    // Claude suggested wording in its answer but didn't mark it: ask it for just the wording, then apply it.
+    const last=[...convo].reverse().find(x=>!x.pending&&!x.err&&x.tg);
+    if(last && !last.used && ['cli','api'].includes(CLAUDE_MODE)){ reply('Getting the exact wording from Claude...'); last.used=true; askClaude('Yes, I want that change. Reply with only the REPLACEMENT line containing the exact new wording for the line I mean.', {tg:last.tg, target:last.target, autoApply:true}); return; }
+    beep(); reply('There\u2019s no suggestion to apply yet.','bad'); say('There is no suggestion to apply yet.'); return; }
+  const t=S.paras[s.tg.pi].text; if(t.slice(s.tg.s,s.tg.e)!==s.original){ const k=t.indexOf(s.original); if(k<0){ beep(); reply('That line has changed since you asked.','bad'); say('That line has changed since you asked.'); return; } s.tg.s=k; s.tg.e=k+s.original.length; }
+  lastSuggestion=null; s.item.used=true; renderConvo();
+  const before=S.paras[s.tg.pi].text; finishEdit(applyRewrite(s.tg, s.text), 'use Claude\u2019s suggestion');
+  if(S.paras[s.tg.pi].text!==before){ reply('Applied Claude\u2019s wording.','good'); const el=$('doc').children[s.tg.pi]; if(el) el.scrollIntoView({block:'center'}); }
+}
+function renderConvo(){
+  $('convo').innerHTML = convo.length ? convo.slice().reverse().filter(x=>!x.quiet).map((x,ri)=>{ const i=convo.length-1-ri;
+    return '<li><div class="cq">'+esc(x.q)+'</div><div class="ca'+(x.err?' bad':'')+'">'+(x.pending?'<span class="thinking">Thinking...</span>':esc(x.a))+'</div>'
+      +(x.sugg?'<div class="csugg"><div>'+esc(x.sugg)+'</div>'+(x.used?'<span class="note">Applied</span>':(lastSuggestion&&lastSuggestion.item===x?'<button type="button" data-use>Use this</button>':''))+'</div>':'')+'</li>'; }).join('')
+    : '<li class="note">Say "Claude" then your question, e.g. "Claude, does this line sound natural?" Only questions you ask go to Claude.</li>';
+}
+
+// ---------- taking down a new line or a note: wait while you think ----------
+// After "change this line" or "highlight this", everything you say is collected until you stop talking
+// for the wait time (set in the status box), or you say "done". "Scratch that" clears it; "cancel" drops it.
+let dictBuf='', dictTimer=null;
+function dictWaitMs(){ return (+$('dwait').value||4)*1000; }
+function dictShow(interim){ $('stxt').textContent='Taking it down. Say "done" when finished.'; $('heard').textContent='So far: '+(dictBuf+(interim?' '+interim:'')).trim(); }
+function dictReset(){ dictBuf=''; clearTimeout(dictTimer); dictTimer=null; }
+function dictCommit(){ clearTimeout(dictTimer); dictTimer=null; const t=dictBuf.trim(); dictBuf=''; if(!t) return; handle(t); }
+function dictHeard(text, final){
+  clearTimeout(dictTimer);
+  if(final){
+    let t=text.trim().replace(/^.*?\b(?:what should it say|what's the note|what is the note)\??[\s,.]*/i,'');
+    if(!t) return;
+    if(/^(?:scratch that|start over|clear that|delete that)[.!]?$/i.test(t)){ dictBuf=''; dictShow(''); say('Cleared. Go ahead.'); dictTimer=setTimeout(dictCommit, dictWaitMs()); return; }
+    if(/^(?:cancel|never mind|nevermind|forget it)[.!]?$/i.test(t)){ dictReset(); handle('cancel'); return; }
+    const end=t.match(/[\s,.]*\b(?:done editing|i'?m done|done|that'?s it|finished|end edit|end note)[.!]?$/i);
+    if(end){ dictBuf+=' '+t.slice(0,end.index); dictCommit(); return; }
+    dictBuf+=' '+t; dictShow('');
+  } else dictShow(text);
+  if(dictBuf.trim()) dictTimer=setTimeout(dictCommit, dictWaitMs());
+}
+
+// ---------- Wispr Flow mode ----------
+// Wispr types into whatever box has focus. In this mode the built-in mic is off, the command box keeps focus,
+// and whatever Wispr types in is carried out as soon as it lands. Wispr waits until you let go of its key,
+// so you can pause and think as long as you like.
+let wisprTimer=null;
+function wisprOn(){ return $('wispr').checked; }
+function wisprFocus(){ if(wisprOn() && document.activeElement!==$('cmd') && !document.activeElement.matches('input,textarea,select,[contenteditable=true]')) $('cmd').focus(); }
+function setWispr(on){
+  $('wispr').checked=on; store('wispr',on?'1':'0');
+  if(on){ if(micWanted) micOff(); $('cmd').placeholder='Hold your Wispr key and speak a command'; $('cmd').classList.add('wispr'); $('cmd').focus(); reply('Wispr mode: hold your Wispr key, speak, let go. Built-in mic is off.','good'); }
+  else { $('cmd').placeholder='Or type a command'; $('cmd').classList.remove('wispr'); }
+  applyEditMode();
+}
+
+// ---------- speech in ----------
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+const TAB_ID=Math.random().toString(36).slice(2); let chan=null, micFails=0;
+try{ chan=new BroadcastChannel('voice-editor'); chan.onmessage=ev=>{ if(ev.data&&ev.data.type==='mic-claim'&&ev.data.id!==TAB_ID&&micWanted){ micOff(); reply('Microphone handed to your other Voice Editor tab. Press Mic here to take it back.','bad'); } }; }catch(e){}
+function micOn(){
+  if($('wispr') && $('wispr').checked) setWispr(false);
+  if(!SR){ reply('This browser has no speech recognition. Use Chrome or Edge.','bad'); return; }
+  if(!micWanted && chan){ try{ chan.postMessage({type:'mic-claim', id:TAB_ID}); }catch(e){} }
+  micWanted=true; $('mic').classList.add('on'); $('mic').textContent='Mic on'; applyEditMode();
+  if(recog) return;
+  recog=new SR(); recog.continuous=true; recog.interimResults=true; recog.maxAlternatives=4; recog.lang=navigator.language||'en-US';
+  pausedIdx=-1; tainted=new Set(); heardLen=new Map(); usedLen=new Map();
+  recog.onresult=onHeard;
+  recog.onstart=()=>{ micFails=0; $('mic').textContent='Mic on'; };
+  recog.onerror=e=>{
+    if(e.error==='not-allowed'||e.error==='service-not-allowed'){ micOff(); reply('Microphone blocked. Allow it in the address bar, then press Mic again.','bad'); return; }
+    if(e.error==='no-speech') return;
+    micFails++;
+    const why={ 'audio-capture':'No microphone found, or another program is using it.', 'network':'The speech service could not be reached. Check your internet connection.', 'aborted':'Listening was interrupted. If another Voice Editor tab is open, close it.' }[e.error]||('Listening stopped ('+e.error+').');
+    $('heard').textContent='Mic problem: '+why; };
+  recog.onresult=onHeard;
+  recog.onend=()=>{ recog=null; if(micWanted){ $('mic').textContent= micFails ? 'Mic retrying' : 'Mic on'; setTimeout(micOn, Math.min(250*Math.pow(2,micFails),4000)); } };
+  try{ recog.start(); }catch(e){}
+  if(mode==='paused') setMode('paused');
+}
+function micOff(){ micWanted=false; $('mic').classList.remove('on'); $('mic').textContent='Mic off'; if(recog){ try{recog.stop();}catch(e){} recog=null; } if(mode==='paused') setMode('paused'); applyEditMode(); }
+let pausedIdxSeen=-2, pausedBy='pause', spokenNowText='', spokenPrevText='';
+function lastMatch(t,re){ const g=new RegExp(re.source,'gi'); let m, last=null; while((m=g.exec(t))) last=m; return last; }
+// The mic hears the reading voice too. A trigger word only counts as echo if the reading voice is saying
+// that word together with the word you said just before it (e.g. "a long pause"). "Pause" on its own, or
+// "okay pause", always counts as you.
+function isEcho(t,m){
+  const spoken=(spokenNowText+' '+spokenPrevText).toLowerCase().replace(/[^a-z' ]+/g,' ');
+  const before=t.slice(0,m.index).toLowerCase().replace(/[^a-z' ]+/g,' ').trim().split(/\s+/).filter(Boolean).pop();
+  if(!before) return false;
+  return new RegExp('\\b'+before.replace(/'/g,"'")+'\\s+'+m[1].toLowerCase()+'\\b').test(spoken);
+}
+const HL_RE=/\b(make a note|add a note|take a note|leave a note|make a comment|add a comment)\b/i;
+function firstLive(t,re){ const g=new RegExp(re.source,'gi'); let m; while((m=g.exec(t))) if(!isEcho(t,m)) return m; return null; }
+function dryRun(pc){ const clone=S.paras.map(p=>({text:p.text}));
+  if(pc.type==='highlight'){ return searchOrder(clone,cur,pc.scope).some(i=>findSpan(clone[i].text,pc.phrase)); }
+  return applyEdit(clone,cur,pc).ok; }
+const PAUSE_RE=/\b(pause|paws|pause it|pours|pores|stop|stop it|stop reading|hold on|hold it|wait|wait a sec|hang on|halt|that's enough|enough)\b/i;
+// Find a usable command inside what was heard (people often lead in with "okay", "um", etc.)
+function extractCommand(t){
+  if(parseCommand(t).type!=='unknown') return t;
+  const re=/\b(change|replace|swap|make|delete|remove|cut|take out|drop|add|insert|put|undo|continue|resume|repeat|go back|back|next|skip|save|rewrite|pronounce|go|jump|find|forward|ahead|where|claude|cloud|ask|use|spell|spelled|synonym|synonyms|select|pick|grab|make|get rid of|head|locate|highlight|high light|hi light|hilight|mark|flag|note|comment)\b/gi; let m;
+  while((m=re.exec(t))){ const sub=t.slice(m.index); if(parseCommand(sub).type!=='unknown') return sub; }
+  return null;
+}
+// ---------- what counts as you talking ----------
+// Recent things the app said, so their echo through the mic is never taken as a command.
+let recentSpoken=[], lastSpeechEnd=0, heardLen=new Map(), usedLen=new Map();
+function rememberSpoken(t){ recentSpoken.push({t:t.toLowerCase(), at:Date.now()}); recentSpoken=recentSpoken.filter(x=>Date.now()-x.at<15000).slice(-6); }
+function soundsLikeEcho(text, dictating){
+  if(Date.now()-lastSpeechEnd>4000 && !busy) return false; // the echo only arrives right after the app speaks
+  const w=tokens(text).map(x=>x.w); if(w.length<2) return false;
+  for(const x of recentSpoken){ const sw=tokens(x.t).map(y=>y.w); if(!sw.length) continue; const set=new Set(sw); const hit=w.filter(y=>set.has(y)).length; if(hit/w.length>=(dictating?0.9:0.6)) return true; }
+  return false;
+}
+const ONE_WORD_OK=/^(?:pause|stop|wait|continue|resume|undo|repeat|back|next|save|done|cancel|help|yes|yeah|yep|no|skip|delete|remove|erase)$/;
+const NOISE=/^(?:uh+|um+|hmm+|mm+|ah+|oh+|eh+|huh|ha+|the|a|an|and|so|but|i|it|is|of|to|in|on|you|what|hey|hi|bye|okay|ok|right|well|like|just|yeah|yes|no)$/;
+function acceptHeard(text, conf, dictating){
+  const clean=text.trim().replace(/[.,!?;:]+/g,' ').replace(/\s+/g,' ').trim().toLowerCase(); const w=tokens(clean);
+  const why = !w.length ? 'nothing there'
+    : (w.length===1 && !dictating && !ONE_WORD_OK.test(clean)) ? 'too short to be a command'
+    : (w.length===1 && NOISE.test(clean) && !(/^(?:yes|yeah|yep|no)$/.test(clean) && (lastSuggestion||notePending||rewritePending))) ? 'sounded like a stray word'
+    : (typeof conf==='number' && conf>0 && conf<0.5 && w.length<=3) ? 'not clear enough'
+    : soundsLikeEcho(clean, dictating) ? 'sounded like the app\u2019s own voice'
+    : '';
+  if(why){ $('heard').textContent='Ignored ('+why+'): '+text; return false; }
+  return true;
+}
+function onHeard(e){
+  for(let i=e.resultIndex;i<e.results.length;i++){
+    const r=e.results[i], t=r[0].transcript.trim(); if(!t) continue; heardLen.set(i,t.length);
+    $('heard').textContent='Heard: '+t;
+    if(mode==='reading'){
+      const fresh = t.slice(usedLen.get(i)||0); // only words heard since reading started or since the last pause we acted on
+      const m=lastMatch(fresh,PAUSE_RE), h=lastMatch(fresh,HL_RE);
+      if((m && !isEcho(fresh,m)) || (h && !isEcho(fresh,h))) usedLen.set(i,t.length);
+      if(m && !isEcho(fresh,m)){ pausedIdx=i; pausedBy='pause'; pause(); reply('Paused.'); }
+      else if(h && !isEcho(fresh,h)){ pausedIdx=i; pausedBy='hl'; pause(); reply('Paused. Listening...'); }
+      else tainted.add(i); // reading voice picked up by the mic
+      continue;
+    }
+    if(busy){ tainted.add(i); continue; }
+    if((notePending||rewritePending) && !busy){ if(r.isFinal && !acceptHeard(t, r[0].confidence, true)) continue; dictHeard(t, r.isFinal); continue; }
+    if(!r.isFinal) continue;
+    let text=t;
+    if(i<pausedIdx) continue;
+    pausedIdxSeen=-2;
+    if(i===pausedIdx){ pausedIdxSeen=i;
+      if(pausedBy==='hl'){ const h=firstLive(text,HL_RE)||text.match(HL_RE); text = h ? text.slice(h.index) : text; }
+      else { const m=text.match(PAUSE_RE); text = m ? text.slice(m.index+m[0].length).replace(/^[\s,.]+/,'') : ''; }
+      pausedIdx=-1; if(!text) continue; }
+    else if(tainted.has(i)){
+      // The mic heard the reading voice and you in one stretch: keep only a command that the reading voice didn't say.
+      const cmd=((m=>m&&!isEcho(text,m)?text.slice(m.index):null)(lastMatch(text,HL_RE)) || ((m=>m&&!isEcho(text,m)?m[0]:null)(lastMatch(text,PAUSE_RE)))) || (LOCAL_EDIT ? extractCommand(text) : null); const said=(curSent+' '+prevSent).toLowerCase();
+      if(cmd && !said.includes(cmd.toLowerCase().split(/\s+/).slice(0,3).join(' '))){ text=cmd; }
+      else { $('heard').textContent='Heard (ignored, sounded like the reading voice): '+t; continue; } }
+    if(!acceptHeard(text, r[0].confidence, !!(notePending||rewritePending))) continue;
+    if(notePending || rewritePending){ dictHeard(text, true); continue; }
+    if(BASIC && !LOCAL_EDIT){ handle(text); continue; }
+    const alts=[text]; for(let a=1;a<r.length;a++){ const at=r[a].transcript.trim(); if(at) alts.push(i===pausedIdxSeen? (pausedBy==='hl' ? at.replace(/^.*?(?=\b(?:highlight|high light|hi light|hilight|hilite|change|replace|rewrite|reword|delete|remove|claude|go back|back up)\b)/i,'') : at.replace(/^.*?\b(?:pause|paws|stop|hold on|wait|hang on)\b[\s,.]*/i,'')) : at); }
+    let pick=null, first=null;
+    for(const a of alts){ const cmd=extractCommand(a); if(!cmd) continue; if(first===null) first=cmd;
+      const pc=parseCommand(cmd); if(!['change','delete','insert','highlight'].includes(pc.type) || pc.type==='highlight'&&pc.target!=='phrase'){ pick=cmd; break; }
+      if(dryRun(pc)){ pick=cmd; break; } }
+    pick=pick||first;
+    if(!pick && BASIC && !isBasicCmd(text)){ $('heard').textContent='Not a command (ignored): '+text; continue; }
+    handle(pick||text);
+  }
+}
+
+// ---------- commands ----------
+// The basic edition understands only these, and ignores everything else (nothing is ever sent to Claude):
+//   pause / stop / hold on / wait                     continue / keep going / carry on / read on
+//   make a note [what to say]  (or just "make a note", then say it; "done" to finish)
+//   read the note / delete the note                   go back / next / go to [words] / go to the top
+//   repeat (reads the section again)                  undo / save
+const BASIC=true;       // Claude is never called from this edition
+const LOCAL_EDIT=true;  // editing by voice (find, change, delete) runs on this computer
+let lastNoteAt=0, lastEditAt=0;
+function basicClean(t){ return t.trim().replace(FILLER,'').replace(/[.?!,]+$/,'').trim(); }
+function sectionIdx(){ return S.paras.map((p,i)=>i).filter(i=>S.paras[i].text && speaksRole(S.paras[i])); }
+function landSection(pi){ if(pi==null||pi<0) return; landOn(pi,0); }
+function findSection(phrase){
+  phrase=cleanOld(phrase); if(!tokens(phrase).length) return null;
+  const order=[]; for(let i=cur;i>=0;i--) order.push(i); for(let i=cur+1;i<S.paras.length;i++) order.push(i);
+  for(const i of order){ if(S.paras[i].text && findSpan(S.paras[i].text, phrase)) return i; }
+  const f=fuzzyFind(phrase,false); return f?f.pi:null;
+}
+function addSectionNote(text){
+  const n=addHighlight({target:'para', scope:'this'}); if(!n) return null;
+  if(text){ n.text=capFirst(spokenPunct(text)); persistNotes(); renderPara(n.pi); }
+  lastNoteAt=Date.now(); return n;
+}
+function handleBasic(text){
+  let s=basicClean(text); let m;
+  // "...whatever the reading voice said... make a note this needs a beat" -> keep from "make a note" on
+  { const hm=lastMatch(s,HL_RE); if(hm && hm.index>0) s=s.slice(hm.index); }
+  const low=s.toLowerCase();
+  if(!low) return;
+  if(/^(?:pause|stop|hold on|hold it|wait|hang on|stop reading)$/.test(low)){ if(mode==='reading') pause(); return; }
+  if(/^(?:continue|resume|keep going|keep reading|go on|carry on|read on|start reading|continue reading|play on)$/.test(low)){ reply(''); readOn(); return; }
+  if(/^(?:repeat|again|read (?:it|that|this) again|read that again|say that again|repeat that|read the section again|repeat the section)$/.test(low)){ si=0; readOn(); return; }
+  if(/^(?:go back|back|previous|previous section|back one|go back one|last section)$/.test(low)){ const L=sectionIdx(); const k=L.filter(i=>i<cur).pop(); landSection(k!==undefined?k:L[0]); return; }
+  if(/^(?:next|skip|next section|forward|go forward|skip ahead)$/.test(low)){ const L=sectionIdx(); const k=L.find(i=>i>cur); landSection(k!==undefined?k:L[L.length-1]); return; }
+  if((m=s.match(/^(?:go|jump|skip|take me|move|head)\s+(?:back\s+)?to\s+(.+)$/i))){
+    const r=m[1].trim(); const L=sectionIdx();
+    if(/^(?:the\s+)?(?:top|start|beginning)(?:\s+of the (?:script|document|book))?$/i.test(r)) return landSection(L[0]);
+    if(/^(?:the\s+)?end(?:\s+of the (?:script|document|book))?$/i.test(r)) return landSection(L[L.length-1]);
+    const pi=findSection(r.replace(/^(?:the\s+)?(?:section|line|part|bit|sentence|place|one|speech)\s+(?:that\s+|which\s+|where\s+)?(?:says|starts with|begins with|with|has|mentions)?\s*/i,''));
+    if(pi==null){ beep(); reply('Couldn\u2019t find "'+r+'".','bad'); say("Couldn't find that."); return; }
+    reply('Found it. Say "make a note", or "continue".','good'); landSection(pi); return;
+  }
+  // notes: "make a note on this section to rewrite the ending", "note: too long", "add a comment ..."
+  if((m=s.match(/^(?:(?:make|add|take|leave|put|write)\s+(?:a\s+)?(?:note|comment)|note|comment)(?:\s+(?:on|for|about|to|in)\s+(?:this|that|the)\s+(?:section|line|part|bit|scene|speech|one))?(?:\s*(?::|,|-)?\s*(?:to say|saying|that says|that|to)?\s+)?(.*)$/i)) && !/^(?:read|delete|remove)/i.test(low)){
+    const body=(m[1]||'').trim();
+    if(mode==='reading') pause();
+    if(body){ addSectionNote(body); reply('Note added to this section.','good'); say('Noted.'); return; }
+    const n=addSectionNote(''); if(!n) return; notePending=n;
+    reply('Go ahead with your note. It waits while you think; say "done" to finish.','good'); say('Go ahead.'); return;
+  }
+  if(/^(?:read|read me|what's|what is)\s+(?:the|my|this|that)\s+(?:note|notes|comment)s?$/.test(low)){ const ns=notesFor(cur); say(ns.length? ns.map(n=>n.text||'No words on this note.').join(' Next note: ') : 'There is no note on this section.'); return; }
+  if(/^(?:delete|remove|scratch|cancel|undo)\s+(?:the|that|this|my|last)\s+(?:note|comment)$/.test(low)){ const ns=notesFor(cur); const n=ns.length? ns[ns.length-1] : NOTES.slice().sort((a,b)=>(b.id>a.id?1:-1))[0];
+    if(!n){ say('There is no note to remove.'); return; } NOTES=NOTES.filter(x=>x!==n); persistNotes(); renderPara(n.pi); reply('Note removed.','good'); say('Note removed.'); return; }
+  if(low==='undo'){ if(lastNoteAt>lastEditAt && NOTES.length){ const n=NOTES[NOTES.length-1]; NOTES.pop(); persistNotes(); renderPara(n.pi); lastNoteAt=0; reply('Note removed.','good'); say('Note removed.'); return; } return undo(); }
+  if(/^(?:save|save it|save a copy|save the file)$/.test(low)) return saveFile();
+  if(/^(?:help|what can i say)$/.test(low)){ reply('Say: pause, continue, make a note, go back, next, go to [words], repeat, read the note, delete the note, undo, save.'); return; }
+  $('heard').textContent='Not a command (ignored): '+text;
+}
+// Plain commands the earlier basic edition handled; they keep behaving exactly as before.
+function isBasicCmd(text){
+  const s=basicClean(text), low=s.toLowerCase(); if(!low) return false;
+  if(HL_RE.test(s)) return true;
+  if(/^(?:repeat|again|read (?:it|that|this) again|read that again|say that again|repeat that|read the section again|repeat the section)$/.test(low)) return true;
+  if(/^(?:go back|back|previous|previous section|back one|go back one|last section)$/.test(low)) return true;
+  if(/^(?:next|skip|next section|forward|go forward|skip ahead)$/.test(low)) return true;
+  if(/^(?:(?:make|add|take|leave|put|write)\s+(?:a\s+)?(?:note|comment)|note|comment)\b/i.test(s) && !/^(?:read|delete|remove)/i.test(low)) return true;
+  if(/^(?:read|read me|what's|what is)\s+(?:the|my|this|that)\s+(?:note|notes|comment)s?$/.test(low)) return true;
+  if(/^(?:delete|remove|scratch|cancel|undo)\s+(?:the|that|this|my|last)\s+(?:note|comment)$/.test(low)) return true;
+  if(low==='undo' && lastNoteAt>lastEditAt && NOTES.length) return true;
+  return false;
+}
+function handle(text, fromClaude){
+  if(notePending) return finishPendingNote(text);
+  if(BASIC && !LOCAL_EDIT) return handleBasic(text);
+  if(LOCAL_EDIT && !rewritePending && isBasicCmd(text)) return handleBasic(text);
+  if(!rewritePending){ const parts=splitCompound(text); if(parts.length>1){ parts.forEach(pt=>handle(pt, fromClaude)); return; } }
+  if(rewritePending){ const rp=rewritePending; rewritePending=null;
+    if(/^(?:cancel|never mind|nevermind|forget it|leave it|no|skip)[.!]?$/i.test(text.trim())){ reply('Left as it was.'); say('Okay, left as it was.'); return; }
+    return finishEdit(applyRewrite(rp, spokenPunct(text.replace(/^(?:it should say|make it say|change it to|to)[:,]?\s+/i,''))), text); }
+  const c=parseCommand(text);
+  if(['highlight','note','unnote','nextnote','prevnote','readnote'].includes(c.type)) return noteHandle(c,text);
+  switch(c.type){
+    case 'pause': if(mode==='reading') pause(); return;
+    case 'resume': reply(''); unsel(); readOn(); return;
+    case 'repeat': setMode('paused'); sayLine(); return;
+    case 'nav': case 'goto': return navHandle(c);
+    case 'ask': askClaude(c.q); return;
+    case 'usesugg': return useSuggestion();
+    case 'undo': return undo();
+    case 'save': return saveFile();
+    case 'micoff': return micOff();
+    case 'help': reply('See "What to say" on the right.'); return;
+    case 'dict': addDict(c.from,c.to); reply('Will say "'+c.from+'" as "'+c.to+'".','good'); say('Got it. '+c.to+'.'); return;
+    case 'select': selectLoc(c.loc,'select'); return;
+    case 'spell': case 'homophone': case 'synonym': return spellHandle(c, text);
+    case 'noop': return;
+    case 'unknown': if(!fromClaude){ interpretWithClaude(text).then(ok=>{ if(!ok){ beep(); reply('Not a command I know: "'+text+'"','bad'); } }); return; } beep(); reply('Not a command I know: "'+text+'"','bad'); return;
+  }
+  if(c.type==='rewrite'){
+    if(c.unit==='char') return charEdit(c, text);
+    const tg=rewriteTarget(c);
+    if(!tg){ beep(); reply('Nothing to change there.','bad'); return; }
+    if(c.del) return finishEdit(deleteTarget(tg), text);
+    if(!c.text){ rewritePending=tg; const what=S.paras[tg.pi].text.slice(tg.s,tg.e);
+      reply('What should it say instead? (Say "cancel" to leave it.)','good'); renderPara(tg.pi);
+      say((tg.whole?'The whole section. ':'')+'What should it say?'); return; }
+    return finishEdit(applyRewrite(tg,c.text), text);
+  }
+  if(c.type==='change' && !c.global){
+    const cands=c.candidates.map(x=>({a:cleanOld(x.a), b:x.b})).filter(x=>tokens(x.a).length);
+    // try every way of splitting the sentence, keep the one whose old words are found closest to where you are
+    let best=null;
+    cands.forEach((x,ci)=>{ const f=regionFind(x.a); if(!f) return; const d=(f.pi===cur?0:1+Math.abs(f.pi-cur)) + (SEL&&f.pi===SEL.pi&&f.s>=SEL.s&&f.e<=SEL.e?-1:0);
+      if(!best || d<best.d || (d===best.d && tokens(x.a).length>tokens(best.x.a).length)) best={x,f,d}; });
+    if(!best){ const shown=cands.length?cands[cands.length-1].a:''; beep(); reply('I couldn\u2019t find "'+(c.candidates[0]?cleanOld(c.candidates[0].a):shown)+'" in this line or nearby.','bad'); say("I couldn't find that word here."); return; }
+    const old=S.paras[best.f.pi].text.slice(best.f.s,best.f.e);
+    const same=tokens(best.x.a).map(t=>t.w).join(' ')===tokens(best.x.b).map(t=>t.w).join(' ');
+    const spelled=joinSpelled(best.x.b, old);
+    let nw = spelled || (same && tokens(old).length===1 ? homophoneOf(old) : null);
+    if(!nw && same){ beep(); reply('That sounds the same as what\u2019s there. Spell it instead, like "spell '+old+' H I".','bad'); say('That sounds the same. Try spelling it.'); return; }
+    if(!nw) nw=matchCase(old, cleanNew(best.x.b, old));
+    return replaceSpan(best.f, nw, text);
+  }
+  if(c.type==='delete' && !c.global){
+    const f=regionFind(c.a); if(!f){ beep(); reply('I couldn\u2019t find "'+cleanOld(c.a)+'" in this line or nearby.','bad'); say("I couldn't find that here."); return; }
+    return replaceSpan(f, '', text);
+  }
+  if((c.type==='rewrite') && c.text && SEL){ const sp=joinSpelled(c.text, S.paras[SEL.pi].text.slice(SEL.s,SEL.e)); if(sp) c.text=sp; }
+  return finishEdit(applyEdit(S.paras, cur, c), text);
+}
+let rewritePending=null;
+const nice=n=>n.toLowerCase().replace(/(^|[\s'])(\w)/g,(m,a,b)=>a+b.toUpperCase());
+function rewriteTarget(c){
+  if(c.unit==='scene'){ const b=resolveBlock({scene:true}); return b?{pi:b.pi, pi2:b.pi2, block:true, s:0, e:b.e, whole:true}:null; }
+  if(c.unit==='char'){ const l=charSpeeches(c); if(!l.length) return null;
+    const i=l[0].paras.find(x=>S.paras[x].role==='dialogue' && S.paras[x].text); if(i===undefined) return null;
+    return {pi:i, s:0, e:S.paras[i].text.length, whole:true}; }
+  const tg=rewriteTarget0(c);
+  if(tg){ const p=S.paras[tg.pi]; if(p.cue && tg.s<p.cue.length){ let s=Math.min(p.text.length,p.cue.length); while(p.text[s]===' ') s++; tg.s=s; } }
+  return tg;
+}
+function rewriteTarget0(c){
+  if(c.unit==='sel' && SEL){ const t=S.paras[SEL.pi].text; return {pi:SEL.pi, pi2:SEL.pi2, block:SEL.pi2!==undefined, s:SEL.s, e:SEL.e, whole:SEL.s===0&&SEL.e===t.length, phrase:SEL.phrase}; }
+  let pi=cur, k=si;
+  if(c.which==='prev'){
+    if(c.unit==='para'){ pi=prevIdx(cur); }
+    else if(k>0) k=k-1; else { pi=prevIdx(cur); k=sentSpans(S.paras[pi].text).length-1; }
+  }
+  const t=S.paras[pi].text; if(!t) return null;
+  if(c.unit==='para') return {pi, s:0, e:t.length, whole:true};
+  const sp=sentSpans(t)[Math.max(0,Math.min(k, sentSpans(t).length-1))]; if(!sp) return null;
+  return {pi, s:sp[0], e:sp[1], whole: sp[0]===0 && sp[1]===t.length};
+}
+// ---- who says what: speeches are a cue plus the lines under it
+function speechList(){
+  const out=[]; let sp=null, scene=-1;
+  S.paras.forEach((p,i)=>{
+    if(p.role==='scene') scene=i;
+    if(p.role==='cue'){ sp={name:p.char, cue:i, paras:[], sc:scene}; out.push(sp); }
+    else if((p.role==='dialogue'||p.role==='paren') && p.char){
+      if(p.cue){ sp={name:p.char, cue:null, paras:[i], sc:scene}; out.push(sp); }
+      else if(sp && sp.name===p.char) sp.paras.push(i);
+      else { sp={name:p.char, cue:null, paras:[i], sc:scene}; out.push(sp); } }
+    else if(p.text) sp=null;
+  });
+  return out;
+}
+function sceneOf(i){ let s=-1; for(let k=0;k<=i&&k<S.paras.length;k++) if(S.paras[k].role==='scene') s=k; return s; }
+function charSpeeches(c){
+  const all=speechList().filter(s=>s.name===c.name && s.paras.some(i=>S.paras[i].role==='dialogue' && S.paras[i].text));
+  if(c.all){ if(c.wide || !sceneStarts().length) return all; const sc=sceneOf(cur); return all.filter(s=>s.sc===sc); }
+  const start=s=>s.cue!=null?s.cue:s.paras[0];
+  let j=all.findIndex(s=>s.cue===cur||s.paras.includes(cur));
+  let before=-1; all.forEach((s,k)=>{ if(start(s)<cur) before=k; });
+  if(c.which==='first') return all.length?[all[0]]:[];
+  if(c.which==='next'){ const k=all.findIndex(s=>start(s)>cur); return k>=0?[all[k]]:[]; }
+  if(c.which==='prev'){ const k=j>=0?j-1:before; return k>=0?[all[k]]:[]; }
+  if(j<0) j = before>=0 ? before : (all.length?0:-1);
+  return j>=0?[all[j]]:[];
+}
+function editSet(changes){ return (i,txt)=>{ const p=S.paras[i]; if(p.text===txt) return; changes.push({idx:i, before:p.text, after:txt}); p.text=txt; p.dirty=true; }; }
+function scopeWords(c){ return c.all ? (c.wide||!sceneStarts().length ? ' in the whole script' : ' in this scene') : ''; }
+function charEdit(c, text){
+  const list=charSpeeches(c);
+  if(!list.length){ beep(); reply('I couldn\u2019t find lines for '+nice(c.name)+(c.all&&!c.wide&&sceneStarts().length?' in this scene. Add "everywhere" to search the whole script.':'.'),'bad'); say("I couldn't find any lines for "+nice(c.name)+" there."); return; }
+  if(c.del) return finishEdit(charDelete(c), text);
+  if(!c.text){ rewritePending=Object.assign({}, c, {unit:'char'}); reply('What should '+nice(c.name)+' say instead? ('+list.length+' line'+(list.length>1?'s':'')+scopeWords(c)+'. Say "cancel" to leave it.)','good');
+    say('What should '+nice(c.name)+' say?'); return; }
+  return finishEdit(charReplace(c, c.text), text);
+}
+function blockDelete(tg){
+  const changes=[]; const set=editSet(changes); for(let i=tg.pi;i<=tg.pi2;i++) if(S.paras[i].text) set(i,'');
+  if(!changes.length) return {ok:false,msg:'That made no change.'};
+  const n=changes.length;
+  return {ok:true, idx:changes[0].idx, before:changes[0].before, after:'', changes, global:true, note:'Deleted '+n+' lines. Say "undo" to bring them back.', speak:'Deleted '+n+' lines. Say undo to bring them back.'};
+}
+// A whole stretch becomes your new words. They go into the first line of dialogue (or action) in the stretch, under that speaker's name; the rest of the stretch is cleared.
+function blockReplace(tg, nt){
+  nt=capFirst((nt||'').trim()); if(!nt) return {ok:false,msg:'I didn\u2019t catch the new words.'};
+  const idx=[]; for(let i=tg.pi;i<=tg.pi2;i++) if(S.paras[i].text) idx.push(i);
+  if(!idx.length) return {ok:false,msg:'There is nothing there to change.'};
+  let host=idx.find(i=>S.paras[i].role==='dialogue'); if(host===undefined) host=idx.find(i=>S.paras[i].role==='action'); if(host===undefined) host=idx[0];
+  const changes=[]; const set=editSet(changes); const hp=S.paras[host];
+  const endP=(hp.text.match(/[.?!]["'\u201D\u2019)]*$/)||[''])[0]; let x=nt; if(endP && !/[.?!]["'\u201D\u2019)]*$/.test(x)) x+=endP;
+  const keepCue=(()=>{ for(let k=host-1;k>=tg.pi;k--){ if(S.paras[k].role==='cue') return k; if(S.paras[k].role!=='paren' && S.paras[k].text) return -1; } return -1; })();
+  idx.forEach(i=>{ if(i!==host && i!==keepCue) set(i,''); });
+  set(host,(hp.cue?hp.cue+' ':'')+x);
+  const n=idx.length;
+  return {ok:true, idx:changes[0].idx, before:changes[0].before, after:changes[0].after, changes, global:true, note:'Replaced '+n+' lines with your words. Say "undo" to bring them back.', speak:'Replaced that section. Say continue when ready, or undo.'};
+}
+function resolveBlock(loc){
+  const sc=sceneStarts(); let last=-1; sc.forEach(i=>{ if(i<=cur) last=i; });
+  const trim=(a,b)=>{ while(a<=b&&!S.paras[a].text) a++; while(b>=a&&!S.paras[b].text) b--; return a<=b?[a,b]:null; };
+  const mk=r=>r?{pi:r[0],pi2:r[1],s:0,e:S.paras[r[0]].text.length,k:0,block:true}:null;
+  if(loc.scene){ if(last<0) return null; const k=sc.indexOf(last); return mk(trim(last+1,(k+1<sc.length?sc[k+1]:S.paras.length)-1)); }
+  const names=new Set(loc.names); const all=speechList(); const order=[];
+  if(last>=0) order.push(last); sc.forEach(i=>{ if(i>last) order.push(i); }); sc.forEach(i=>{ if(i<last) order.push(i); }); if(!sc.length) order.push(-1);
+  for(const sceneIdx of order){
+    const sp=all.filter(s=>s.sc===sceneIdx); const runs=[]; let run=[];
+    sp.forEach(s=>{ if(names.has(s.name)) run.push(s); else { if(run.length) runs.push(run); run=[]; } }); if(run.length) runs.push(run);
+    const hit=runs.find(r=>loc.names.every(n=>r.some(s=>s.name===n)));
+    if(hit){ const f=hit[0], l=hit[hit.length-1]; const a=f.cue!=null?f.cue:f.paras[0]; const b=l.paras.length?l.paras[l.paras.length-1]:l.cue; return mk(trim(a,b)); }
+  }
+  return null;
+}
+function charDelete(c){
+  const list=charSpeeches(c); const changes=[]; const set=editSet(changes);
+  list.forEach(sp=>{ if(sp.cue!=null) set(sp.cue,''); sp.paras.forEach(i=>set(i,'')); });
+  if(!changes.length) return {ok:false,msg:'That made no change.'};
+  const n=list.length;
+  return {ok:true, idx:changes[0].idx, before:changes[0].before, after:'', changes, global:true,
+    note:'Deleted '+n+' of '+nice(c.name)+'\u2019s speech'+(n>1?'es':'')+scopeWords(c)+'. Say "undo" to bring '+(n>1?'them':'it')+' back.',
+    speak:'Deleted '+n+' of '+nice(c.name)+'\u2019s speech'+(n>1?'es':'')+'. Say undo to bring '+(n>1?'them':'it')+' back.'};
+}
+function charReplace(c, nt){
+  nt=capFirst((nt||'').trim()); if(!nt) return {ok:false,msg:'I didn\u2019t catch the new words.'};
+  const list=charSpeeches(c); if(!list.length) return {ok:false,msg:'I couldn\u2019t find those lines.'};
+  const changes=[]; const set=editSet(changes);
+  list.forEach(sp=>{ sp.paras.filter(i=>S.paras[i].role==='dialogue').forEach((i,k)=>{ const p=S.paras[i];
+    if(k===0){ const old=p.text.slice(p.cue?p.cue.length:0).trim(); let x=nt; const endP=(old.match(/[.?!]["'\u201D\u2019)]*$/)||[''])[0]; if(endP && !/[.?!]["'\u201D\u2019)]*$/.test(x)) x+=endP;
+      set(i,(p.cue?p.cue+' ':'')+x); }
+    else set(i,''); }); });
+  if(!changes.length) return {ok:false,msg:'That made no change.'};
+  const n=list.length;
+  return {ok:true, idx:changes[0].idx, before:changes[0].before, after:changes[0].after, changes, global:true,
+    note:'Changed '+n+' of '+nice(c.name)+'\u2019s speech'+(n>1?'es':'')+scopeWords(c)+'.', speak:'Changed '+n+' of '+nice(c.name)+'\u2019s speech'+(n>1?'es':'')+'. Say continue when ready.'};
+}
+// Deleting the words of a line. If that empties a whole speech, the character name above it goes too.
+function deleteTarget(tg){
+  if(tg.block) return blockDelete(tg);
+  const p=S.paras[tg.pi], t=p.text; let nt=tidy(t.slice(0,tg.s)+t.slice(tg.e));
+  if(p.cue && nt.length<=p.cue.length) nt='';
+  const changes=[]; const set=editSet(changes); set(tg.pi, nt);
+  if(p.role==='dialogue' && !nt){ const sp=speechList().find(s=>s.paras.includes(tg.pi));
+    if(sp && sp.paras.every(i=>S.paras[i].role!=='dialogue' || !S.paras[i].text)){ if(sp.cue!=null) set(sp.cue,''); sp.paras.forEach(i=>{ if(S.paras[i].role==='paren') set(i,''); }); } }
+  if(!changes.length) return {ok:false,msg:'That made no change.'};
+  return {ok:true, idx:changes[0].idx, before:changes[0].before, after:changes[0].after, changes};
+}
+function applyRewrite(tg, nt){
+  if(tg.block) return blockReplace(tg, nt);
+  if(tg.unit==='char') return charReplace(tg, nt);
+  nt=(nt||'').trim(); if(!nt) return {ok:false, msg:'I didn\u2019t catch the new words.'};
+  const t=S.paras[tg.pi].text, old=t.slice(tg.s,tg.e);
+  { const sp=joinSpelled(nt, old.match(/[A-Za-z']+/)?old.match(/[A-Za-z']+/)[0]:old); if(sp){ if(!tg.phrase){ const w=old.match(/[A-Za-z'\u2019]+/); if(w && sentences(old).length===1 && tokens(old).length===1){ nt=sp; } else nt=sp; } else nt=sp; } }
+  if(tg.phrase){ return single(S.paras, tg.pi, tidy(t.slice(0,tg.s)+matchCase(old,nt)+t.slice(tg.e))); }
+  nt=capFirst(nt);
+  const endP=(old.match(/[.?!]["'\u201D\u2019)]*$/)||[''])[0]; if(endP && !/[.?!]["'\u201D\u2019)]*$/.test(nt)) nt+=endP;
+  if(old===old.toUpperCase() && /[A-Z]/.test(old)) nt=nt.toUpperCase();
+  return single(S.paras, tg.pi, tidy(t.slice(0,tg.s)+nt+t.slice(tg.e)));
+}
+function finishEdit(r, text){ lastEditAt=Date.now();
+  if(!r.ok){ beep(); reply(r.msg,'bad'); say("Couldn't find that."); return; }
+  unsel();
+  history.push(r.changes.map(ch=>({idx:ch.idx, before:ch.before, dirty:!!S.paras[ch.idx].wasDirty})));
+  r.changes.forEach(ch=>{ log.unshift({sec:secNo(ch.idx), cmd:text, before:ch.before, after:ch.after}); renderPara(ch.idx); flash(ch.idx); });
+  r.changes.forEach(ch=>notesFor(ch.idx).forEach(relocate)); if(NOTES.length) persistNotes();
+  renderLog(); refreshTableRead(); const ss=sentences(S.paras[cur].text); if(si>=ss.length) si=Math.max(0,ss.length-1);
+  if(!S.paras[cur].text){ let to=S.paras.findIndex((p,i)=>i>cur && p.text && speaksRole(p)); if(to<0){ for(let i=cur-1;i>=0;i--) if(S.paras[i].text && speaksRole(S.paras[i])){ to=i; break; } } if(to>=0) landOn(to,0,true); }
+  if(r.global){ reply(r.note||('Changed '+r.changes.length+' section'+(r.changes.length>1?'s':'')+'.'),'good'); say(r.speak||('Changed '+r.changes.length+' places. Say continue when ready.')); return; }
+  if(!r.after){ reply('Deleted. Say "continue", "undo", or another change.','good'); say('Deleted.'); return; }
+  const sent=changedSentence(r.before,r.after);
+  reply('Done. Say "continue", "undo", or another change.','good');
+  say('Done. It now reads: '+speakable(sent));
+}
+function changedSentence(a,b){ let k=0; while(k<a.length&&k<b.length&&a[k]===b[k]) k++;
+  let pos=0; for(const s of sentences(b)){ const at=b.indexOf(s,pos); if(at+s.length>=k) return s; pos=at+s.length; } return b; }
+function secNo(i){ let n=0; for(let k=0;k<=i;k++) if(S.paras[k].text||k===i) n++; return n; }
+function undo(){
+  reconcileDoc();
+  const h=history.pop(); if(!h){ reply('Nothing to undo.'); say('Nothing to undo.'); return; }
+  if(h.snap){ S.paras=h.snap.map(x=>{ x.p.text=x.text; x.p.dirty=x.dirty; return x.p; }); NOTES=h.notes; cur=Math.min(h.cur,S.paras.length-1); SEL=null;
+    const sc=$('doc').scrollTop; renderAll(); $('doc').scrollTop=sc; persistNotes(); refreshTableRead();
+    log.unshift({sec:'', cmd:'undo typing', before:'', after:''}); renderLog(); reply('Undone.','good'); say('Undone.'); return; }
+  h.forEach(x=>{ S.paras[x.idx].text=x.before; S.paras[x.idx].dirty=true; renderPara(x.idx); flash(x.idx); });
+  refreshTableRead();
+  log.unshift({sec:secNo(h[0].idx), cmd:'undo', before:'', after:S.paras[h[0].idx].text}); renderLog();
+  reply('Undone.','good'); say('Undone.');
+}
+function flash(i){ const el=$('doc').children[i]; if(!el) return; el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); }
+function startTypeEdit(i){
+  if(!S.paras[i].text) return; stopSpeech(); setMode('paused'); setCur(i);
+  const el=$('doc').children[i]; el.textContent=S.paras[i].text; el.contentEditable='true'; el.focus();
+  const done=()=>{ el.contentEditable='false'; el.removeEventListener('blur',done);
+    const nt=el.textContent.replace(/\s+/g,' ').trim();
+    if(nt!==S.paras[i].text){ history.push([{idx:i,before:S.paras[i].text}]); log.unshift({sec:secNo(i),cmd:'typed edit',before:S.paras[i].text,after:nt}); S.paras[i].text=nt; S.paras[i].dirty=true; renderLog(); refreshTableRead(); }
+    renderPara(i); };
+  el.addEventListener('blur',done);
+  el.addEventListener('keydown',ev=>{ if(ev.key==='Enter'&&!ev.shiftKey){ ev.preventDefault(); el.blur(); } if(ev.key==='Escape'){ el.textContent=S.paras[i].text; el.blur(); } });
+}
+function renderLog(){
+  $('ccount').textContent=log.length?'('+log.length+')':'';
+  $('log').innerHTML=log.slice(0,200).map(l=>'<li><div class="sec">Section '+l.sec+' · "'+esc(l.cmd)+'"</div>'+(l.before?'<del>'+esc(diffPart(l.before,l.after)[0])+'</del><br>':'')+'<ins>'+esc(diffPart(l.before,l.after)[1])+'</ins></li>').join('');
+}
+function diffPart(a,b){ if(!a) return ['',b]; let s=0; while(s<a.length&&s<b.length&&a[s]===b[s]) s++; let e=0; while(e<a.length-s&&e<b.length-s&&a[a.length-1-e]===b[b.length-1-e]) e++;
+  const pad=30, s0=Math.max(0,a.lastIndexOf(' ',Math.max(0,s-pad))); const cut=(t,x,y)=>(x>0?'...':'')+t.slice(x,y).trim()+(y<t.length?'...':'');
+  return [cut(a,s0,Math.min(a.length,a.length-e+pad)), cut(b,s0,Math.min(b.length,b.length-e+pad))]; }
+let actx=null; function beep(){ try{ actx=actx||new AudioContext(); const o=actx.createOscillator(), g=actx.createGain(); o.frequency.value=330; g.gain.value=.08; o.connect(g); g.connect(actx.destination); o.start(); o.stop(actx.currentTime+.18);}catch(e){} }
+
+// ---------- files ----------
+// Next version of a file name: _v2 -> _v3, Draft3 -> Draft4, no number -> _v2 (before a _Nov2026 style date), month stamp = this month.
+function suggestName(n){
+  const m=n.match(/^(.*?)(\.[^.]+)$/); let base=m?m[1]:n, ext=m?m[2]:''; if(/^\.pdf$/i.test(ext)) ext='.docx';
+  const MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'], d=new Date(), stamp=MON[d.getMonth()]+d.getFullYear();
+  if(/_v\d+/i.test(base)) base=base.replace(/_v(\d+)/i,(x,k)=>'_v'+(+k+1));
+  else if(/Draft[\s_]?\d+/i.test(base)) base=base.replace(/(Draft[\s_]?)(\d+)/i,(x,a,k)=>a+(+k+1));
+  else if(/_(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\d{4}$/.test(base)) base=base.replace(/(_(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\d{4})$/,'_v2$1');
+  else base+='_v2';
+  base=base.replace(/(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\d{4}/,stamp);
+  return base+ext;
+}
+// Where the opened file lives: the browser lets us start the Save box in that folder (OneDrive or wherever it came from).
+let openedHandle=null, pendingHandle=null;
+function idbOpen(){ return new Promise((res,rej)=>{ const r=indexedDB.open('voice-editor',1); r.onupgradeneeded=()=>r.result.createObjectStore('h'); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
+async function idbGet(k){ try{ const d=await idbOpen(); return await new Promise(res=>{ const q=d.transaction('h').objectStore('h').get(k); q.onsuccess=()=>res(q.result||null); q.onerror=()=>res(null); }); }catch(e){ return null; } }
+async function idbSet(k,v){ try{ const d=await idbOpen(); await new Promise((res,rej)=>{ const tx=d.transaction('h','readwrite'); tx.objectStore('h').put(v,k); tx.oncomplete=res; tx.onerror=rej; }); }catch(e){} }
+$('file').addEventListener('change',async ev=>{
+  const f=ev.target.files[0]; if(!f) return; stopSpeech();
+  const hnd=pendingHandle; pendingHandle=null;
+  try{
+    if(/\.pdf$/i.test(f.name)){
+      if(!window.pdfjsLib) throw new Error('the PDF reader did not load. Check your internet connection and reopen this page.');
+      pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      reply('Reading the PDF...');
+      S = await loadPdf(await f.arrayBuffer());
+      if(!S.paras.some(p=>p.text)) throw new Error('no text found. This PDF may be a scan (pictures of pages).');
+    } else S = /\.docx$/i.test(f.name) ? await loadDocx(await f.arrayBuffer()) : loadText(await f.text());
+  }catch(e){ reply('Could not open that file: '+e.message,'bad'); return; }
+  fileName=f.name; openedHandle=hnd; $('fname').value=suggestName(f.name); if(S.kind==='pdf') setTimeout(()=>reply('PDF opened. Edits save as a Word file.','good'),0); history=[]; log=[]; renderLog(); loadCast();
+  S.screenplay=false; cur=S.paras.findIndex(p=>p.text); if(cur<0) cur=0; si=0; loadNotes(); renderAll(); refreshTableRead(); setMode('idle','Opened '+f.name+'. Press Read.'); reply(''); if(needsScreenplayWord()){ $('fname').value=suggestName(f.name).replace(/\.[^.]+$/,'')+'.docx'; if(S.kind!=='pdf') setTimeout(()=>reply('Opened. This will be saved as a properly formatted screenplay Word file (scene headings, character names, dialogue and action in standard positions).','good'),0); } ev.target.value='';
+});
+// Edge and Chrome remember the last folder for each id below, the way Windows Explorer does.
+async function pickAndSave(name, blob){
+  if(window.showSaveFilePicker){
+    const ext=(name.match(/\.[^.]+$/)||['.txt'])[0].toLowerCase();
+    const mime={'.docx':'application/vnd.openxmlformats-officedocument.wordprocessingml.document','.txt':'text/plain','.md':'text/markdown','.fountain':'text/plain'}[ext]||'application/octet-stream';
+    try{
+      const o={suggestedName:name, types:[{description:ext.slice(1).toUpperCase()+' file', accept:{[mime]:[ext]}}]};
+      let h; try{ h=await window.showSaveFilePicker({...o, startIn:openedHandle||'downloads'}); }catch(e){ if(e && e.name==='AbortError') throw e; h=await window.showSaveFilePicker({...o, startIn:'downloads'}); }
+      const w=await h.createWritable(); await w.write(blob); await w.close(); return h.name;
+    }catch(e){ if(e && e.name==='AbortError') return null; }
+  }
+  if(!window.showSaveFilePicker && navigator.canShare && navigator.share){ try{ const f=new File([blob],name,{type:blob.type}); if(navigator.canShare({files:[f]})){ await navigator.share({files:[f],title:name}); return name+' (shared)'; } }catch(e){ if(e && e.name==='AbortError') return null; } }   // phones: share sheet, so the file can go straight to OneDrive
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+  return name+' (in your Downloads folder)';
+}
+// Anything that is a script but is not already a laid-out Word file (PDF, plain text, loose Word) is saved as a properly formatted screenplay.
+function needsScreenplayWord(){ return !!(S.cast && S.cast.length>=1 && (S.kind==='pdf' || S.kind==='text' || (S.kind==='docx' && !S.hasLayout))); }
+async function saveFile(){
+  reconcileDoc(); classify();
+  const sp=needsScreenplayWord(); if(sp) S.screenplay=true;
+  const asWord = S.kind==='pdf' || sp || (S.kind==='text' && NOTES.length);
+  const blob = (S.kind==='docx' && !sp) ? await saveDocx(S) : asWord ? await buildDocx(S) : saveText(S);
+  let name=$('fname').value.trim()||suggestName(fileName); if(asWord && !/\.docx$/i.test(name)) name=name.replace(/\.[^.]+$/,'')+'.docx';
+  const saved=await pickAndSave(name, blob); if(!saved){ reply('Save cancelled.'); return; }
+  $('fname').value=saved.replace(/ \((?:in your Downloads folder|shared)\)$/,'');
+  reply('Saved '+saved+'.','good');
+  if(mode!=='reading') say('Saved.');
+}
+$('logdl').onclick=()=>{
+  const txt='Changes to '+fileName+'\n\n'+log.slice().reverse().map((l,k)=>(k+1)+'. Section '+l.sec+' ("'+l.cmd+'")\n   BEFORE: '+l.before+'\n   AFTER:  '+l.after).join('\n\n');
+  pickAndSave((($('fname').value||fileName).replace(/\.[^.]+$/,''))+'_changes.txt', new Blob([txt],{type:'text/plain'}));
+};
+
+// ---------- wiring ----------
+$('openlabel').addEventListener('click',async ev=>{
+  if(!window.showOpenFilePicker || ev.target===$('file')) return;
+  ev.preventDefault();
+  try{
+    let home=await idbGet('home');
+    if(!home || ev.shiftKey){ try{ reply('Choose your OneDrive - bytestream-strategies.com folder once. From now on Open starts there (other drives and Downloads are still one click away; Shift+click Open to choose a different start folder).','good');
+        home=await window.showDirectoryPicker({id:'voice-editor-home', mode:'read', startIn:'documents'}); await idbSet('home',home); reply(''); }catch(e){ if(!e || e.name!=='AbortError') home=null; else home=home||null; } }
+    const o={types:[{description:'Scripts and manuscripts', accept:{'application/vnd.openxmlformats-officedocument.wordprocessingml.document':['.docx'],'application/pdf':['.pdf'],'text/plain':['.txt','.fountain','.md']}}]};
+    let h; try{ [h]=await window.showOpenFilePicker({...o, startIn:home||'documents'}); }catch(e){ if(e && e.name==='AbortError') throw e; [h]=await window.showOpenFilePicker({...o, startIn:'documents'}); }
+    pendingHandle=h; const f=await h.getFile(); const dt=new DataTransfer(); dt.items.add(f); $('file').files=dt.files; $('file').dispatchEvent(new Event('change')); }
+  catch(e){ if(!e || e.name!=='AbortError') $('file').click(); }
+});
+$('play').onclick=()=>{ if(mode==='reading') pause(); else readOn(); };
+$('back').onclick=()=>navLines(-1); $('next').onclick=()=>navLines(1);
+$('mic').onclick=()=>{ if(!micWanted && location.protocol==='file:') reply('Tip: opened straight from a file, the browser asks for the mic over and over. Open it with "Start Voice Editor" instead and it asks once.'); micWanted?micOff():micOn(); };
+$('dform').onsubmit=ev=>{ ev.preventDefault(); if(addDict($('dfrom').value,$('dto').value)){ $('dfrom').value=''; $('dto').value=''; $('dfrom').focus(); } };
+$('dlist').onclick=ev=>{ const b=ev.target.closest('.x'); if(!b) return; DICT.splice(+b.dataset.i,1); saveDict(); };
+$('dreset').onclick=()=>{ const have=new Set(DICT.map(d=>d.from.toLowerCase())); DEFAULT_DICT.forEach(d=>{ if(!have.has(d.from.toLowerCase())) DICT.push({...d}); }); saveDict(); reply('Screenplay terms restored.','good'); };
+$('dexport').onclick=()=>pickAndSave('Pronunciation_List.txt', new Blob([DICT.map(d=>d.from+' = '+d.to).join('\r\n')],{type:'text/plain'}));
+$('dimport').onchange=async ev=>{ const f=ev.target.files[0]; if(!f) return; let n=0;
+  (await f.text()).split(/\r?\n/).forEach(l=>{ const k=l.indexOf('='); if(k>0 && addDict(l.slice(0,k),l.slice(k+1))) n++; }); ev.target.value=''; reply('Loaded '+n+' entries.','good'); };
+['tr','tr_scene','tr_action','tr_paren','tr_trans'].forEach(id=>{ const v=store(id); if(v!==null && v!==undefined) $(id).checked=v==='1';
+  $(id).onchange=()=>{ store(id,$(id).checked?'1':'0'); renderRoles(); if(mode==='reading') readOn(); }; });
+$('recast').onclick=()=>{ autoCast(true); renderCast(); reply('Recast.','good'); };
+$('castlist').onchange=ev=>{ const t=ev.target; const i=t.dataset.c??t.dataset.p; if(i===undefined) return; const c=S.cast[+i]; CAST[c.name]=CAST[c.name]||{};
+  if(t.dataset.c!==undefined){ CAST[c.name].voice=t.value; CAST[c.name].manual=true; } else CAST[c.name].pitch=+t.value; saveCast(); };
+$('castlist').onclick=ev=>{ const b=ev.target.closest('[data-t]'); if(!b) return; const c=S.cast[+b.dataset.t];
+  const p=S.paras.find(q=>q.role==='dialogue'&&q.char===c.name); if(!p) return; if(mode==='reading') pause();
+  stopSpeech(); const cc=CAST[c.name]||{}; const u=utter(speakable(sentences(p.text.replace(/\([^)]*\)/g,' '))[0]||p.text), {voice:synth.getVoices().find(v=>v.name===cc.voice), pitch:cc.pitch||1}); synth.speak(u); };
+$('notes').addEventListener('click',ev=>{ const li=ev.target.closest('li[data-n]'); if(!li) return; const n=NOTES.find(x=>x.id===li.dataset.n); if(!n) return;
+  if(ev.target.closest('[data-go]')){ stopSpeech(); setCur(n.pi); si=0; setMode('paused'); }
+  if(ev.target.closest('[data-rm]')){ NOTES=NOTES.filter(x=>x!==n); if(notePending===n) notePending=null; persistNotes(); renderPara(n.pi); } });
+$('notes').addEventListener('change',ev=>{ const li=ev.target.closest('li[data-n]'); const n=li&&NOTES.find(x=>x.id===li.dataset.n); if(n&&ev.target.matches('[data-done]')){ n.done=ev.target.checked; persistNotes(); renderPara(n.pi); } });
+$('notes').addEventListener('focusout',ev=>{ if(!ev.target.matches('.ntext')) return; const li=ev.target.closest('li[data-n]'); const n=li&&NOTES.find(x=>x.id===li.dataset.n); if(!n) return;
+  const t=ev.target.textContent.trim(); if(t!==n.text){ n.text=t; if(notePending===n) notePending=null; persistNotes(); renderPara(n.pi); } });
+$('notesdl').onclick=()=>{ const list=NOTES.slice().sort((a,b)=>a.pi-b.pi||a.s-b.s);
+  const txt='Notes on '+fileName+'\r\n\r\n'+list.map((n,k)=>(k+1)+'. Section '+secNo(n.pi)+(n.done?' [done]':'')+'\r\n   Text: '+(n.whole?S.paras[n.pi].text:n.quote)+'\r\n   Note: '+(n.text||'(highlight only)')).join('\r\n\r\n');
+  pickAndSave((fileName.replace(/\.[^.]+$/,''))+'_notes.txt', new Blob([txt],{type:'text/plain'})); };
+// Shift+Enter would put a line break inside a speech, which a section can't hold; ignore it.
+$('doc').addEventListener('beforeinput',ev=>{ if(typingMode() && ev.inputType==='insertLineBreak') ev.preventDefault(); });
+$('doc').addEventListener('input',()=>{ if(!typingMode()) return; docDirty=true; clearTimeout(recTimer); recTimer=setTimeout(reconcileDoc,1500); });
+$('doc').addEventListener('focusout',ev=>{ if(typingMode() && !$('doc').contains(ev.relatedTarget)) reconcileDoc(); });
+$('doc').addEventListener('paste',ev=>{ if(!typingMode()) return; ev.preventDefault();
+  const t=((ev.clipboardData||window.clipboardData).getData('text')||'').replace(/\r\n?/g,'\n'); const lines=t.split(/\n+/).map(x=>x.replace(/\s+/g,' ').trim()).filter(x=>x);
+  if(lines.length<=1) document.execCommand('insertText',false,lines[0]||''); else document.execCommand('insertHTML',false,lines.map(l=>'<p>'+esc(l)+'</p>').join('')); });
+$('doc').addEventListener('click',()=>{ if(typingMode()){ const c=caretInfo(); if(c && c.el.dataset.i!==undefined){ const old=cur; cur=+c.el.dataset.i; si=caretSentence(c.el,cur); if(old!==cur) renderPara(old); } } });
+$('cform').onsubmit=ev=>{ ev.preventDefault(); const q=$('cq').value.trim(); if(!q) return; $('cq').value=''; askClaude(q); };
+$('cq').addEventListener('keydown',ev=>{ if(ev.key==='Enter'&&!ev.shiftKey){ ev.preventDefault(); $('cform').requestSubmit(); } });
+$('cnew').onclick=()=>{ convo=[]; lastSuggestion=null; renderConvo(); };
+$('convo').onclick=ev=>{ if(ev.target.closest('[data-use]')) useSuggestion(); };
+['cscope','cmodel','caloud','cinterp'].forEach(id=>{ const v=store(id); if(v!==null&&v!==undefined){ if(id==='caloud'||id==='cinterp') $(id).checked=v==='1'; else $(id).value=v; }
+  $(id).onchange=()=>{ store(id, (id==='caloud'||id==='cinterp')?($(id).checked?'1':'0'):$(id).value); updateCtxEstimate(); }; });
+$('capsfix').onchange=()=>store('capsfix',$('capsfix').checked?'1':'0');
+if(store('capsfix')==='0') $('capsfix').checked=false;
+$('save').onclick=saveFile;
+$('cmdform').onsubmit=ev=>{ ev.preventDefault(); clearTimeout(wisprTimer); const t=$('cmd').value.trim(); if(!t) return; $('cmd').value='';
+  if(mode==='reading' && !/^(?:pause|stop|wait)/i.test(t)) pause();
+  if(notePending||rewritePending){ dictReset(); }
+  handle(t); setTimeout(wisprFocus,50); };
+$('cmd').addEventListener('input',ev=>{ if(!wisprOn()) return;
+  if(ev.inputType==='insertFromPaste' || (ev.data && ev.data.length>2) || ev.inputType==='insertReplacementText'){ clearTimeout(wisprTimer); wisprTimer=setTimeout(()=>$('cmdform').requestSubmit(), 600); } });
+$('wispr').onchange=()=>setWispr($('wispr').checked);
+$('dwait').oninput=()=>{ $('dwaitv').textContent=$('dwait').value+' s'; store('dwait',$('dwait').value); };
+if(store('dwait')) $('dwait').value=store('dwait'); $('dwaitv').textContent=$('dwait').value+' s';
+document.addEventListener('click',()=>setTimeout(wisprFocus,0));
+if(store('wispr')==='1') setTimeout(()=>setWispr(true),0);
+$('rate').oninput=()=>store('rate',$('rate').value); $('voice').onchange=()=>{ store('voice',$('voice').value); try{ if($('tr').checked && S.cast) refreshTableRead(); }catch(e){} if(mode!=='reading') say('This is '+$('voice').value.replace(/^Microsoft /,'').replace(/ Online \(Natural\).*/,'')+'.'); };
+document.addEventListener('keydown',ev=>{
+  if(ev.target.matches('input,select,[contenteditable=true]')) return;
+  if(ev.code==='Space'){ ev.preventDefault(); $('play').click(); }
+  else if(ev.key==='ArrowUp'){ ev.preventDefault(); navLines(-1); } else if(ev.key==='ArrowDown'){ ev.preventDefault(); navLines(1); }
+  else if(ev.key==='ArrowLeft') navSections(-1); else if(ev.key==='ArrowRight') navSections(1);
+  else if((ev.ctrlKey||ev.metaKey)&&ev.key==='z'){ ev.preventDefault(); undo(); }
+});
+function store(k,v){ try{ if(v===undefined) return localStorage.getItem('ve_'+k); localStorage.setItem('ve_'+k,v); }catch(e){ return null; } }
+window.addEventListener('beforeunload',ev=>{ if(log.length||NOTES.length){ ev.preventDefault(); ev.returnValue=''; } });
+if(store('rate')) $('rate').value=store('rate');
+voices(); synth.onvoiceschanged=()=>{ voices(); autoCast(false); renderCast(); };
+$('fname').value=suggestName(fileName);
+loadCast(); loadNotes(); renderAll(); setMode('idle'); renderDict(); refreshTableRead();
+if(!SR) reply('Speech recognition needs Chrome or Edge. Typing commands still works.','bad');
+</script>
+</body>
+</html>
