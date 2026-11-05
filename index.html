@@ -134,7 +134,7 @@ aside{overflow-x:hidden} #convo li,#convo .cq,#convo .ca,#convo .csugg{min-width
 </head>
 <body>
 <header>
-  <h1>Voice Editor <span class="ver">v30</span></h1>
+  <h1>Voice Editor <span class="ver">v31</span></h1>
   <label class="filebtn" id="openlabel" tabindex="0" title="Word, PDF or text">Open file<input id="file" type="file" accept=".docx,.pdf,.txt,.fountain,.md"></label>
   <div class="group">
     <button id="back" title="Previous section (Left arrow)">Back</button>
@@ -915,7 +915,7 @@ function readOn(){
   };
   const fill=()=>{
     if(my!==tok||mode!=='reading') return;
-    while(inFlight<AHEAD && !done){
+    while(inFlight<($('tr').checked?1:AHEAD) && !done){
       const c=nextChunk(); if(!c){ done=true; break; }
       const u=utter(c.spoken, c.vopt); inFlight++; let started=false;
       const retryHere=why=>{ if(my!==tok) return; const again=speechTrouble(why); stopSpeech(); cur=c.pi; si=c.s0; if(again) readOn(); else setMode('paused'); };
