@@ -134,7 +134,7 @@ aside{overflow-x:hidden} #convo li,#convo .cq,#convo .ca,#convo .csugg{min-width
 </head>
 <body>
 <header>
-  <h1>Voice Editor <span class="ver">v31</span></h1>
+  <h1>Voice Editor <span class="ver">v32</span></h1>
   <label class="filebtn" id="openlabel" tabindex="0" title="Word, PDF or text">Open file<input id="file" type="file" accept=".docx,.pdf,.txt,.fountain,.md"></label>
   <div class="group">
     <button id="back" title="Previous section (Left arrow)">Back</button>
@@ -921,7 +921,8 @@ function readOn(){
       const retryHere=why=>{ if(my!==tok) return; const again=speechTrouble(why); stopSpeech(); cur=c.pi; si=c.s0; if(again) readOn(); else setMode('paused'); };
       let watchdog=null; const arm=()=>{ watchdog=setTimeout(()=>{ if(!started && my===tok && mode==='reading') retryHere('no sound'); }, 7000); };
       if(inFlight===1) arm(); else u._arm=arm;
-      u.onstart=()=>{ started=true; clearTimeout(watchdog); if(my!==tok) return; try{ const P2=S.paras[c.pi]; const who=(P2.role==='dialogue'&&P2.char&&$('tr').checked)?P2.char:'Narrator'; $('nowv').textContent='Speaking: '+who+' ('+P2.role+') - voice: '+((u.voice&&u.voice.name)||'device default').replace(/^Microsoft /,'').replace(/ Online.*/,'')+', pitch '+u.pitch; }catch(e){} prevSent=curSent; curSent=c.orig+' '+c.spoken; spokenPrevText=spokenNowText; spokenNowText=c.spoken; si=c.s0; if(cur!==c.pi) setCur(c.pi); else renderPara(cur); };
+      u.onstart=()=>{ started=true; clearTimeout(watchdog); if(my!==tok) return; try{ const P2=S.paras[c.pi]; const sh=n=>(n||'').replace(/^Microsoft /,'').replace(/ Online.*/,'').replace(/ - English.*/,'').replace(/ Desktop.*/,''); const who=(P2.role==='dialogue'&&P2.char&&$('tr').checked)?P2.char:'Narrator';
+  $('nowv').innerHTML='<b>'+esc(who)+'</b> ('+esc(P2.role)+') reads: "'+esc(c.spoken.slice(0,36))+'"<br>voice used: <b>'+esc(sh(u.voice&&u.voice.name)||'device default')+'</b>, pitch '+u.pitch+'<br>narrator (main Voice): '+esc(sh((curVoice()||{}).name))+(CAST[P2.char]?' | cast voice for '+esc(P2.char)+': '+esc(sh(CAST[P2.char].voice)):''); }catch(e){ try{ $('nowv').textContent='label error: '+e.message; }catch(_){} } prevSent=curSent; curSent=c.orig+' '+c.spoken; spokenPrevText=spokenNowText; spokenNowText=c.spoken; si=c.s0; if(cur!==c.pi) setCur(c.pi); else renderPara(cur); };
       u.onboundary=ev=>{ if(my!==tok||typeof ev.charIndex!=='number') return; let k=0; while(k+1<c.offs.length && c.offs[k+1]<=ev.charIndex) k++; if(c.s0+k!==si){ si=c.s0+k; renderPara(cur); } };
       const fin=ev=>{ clearTimeout(watchdog); if(my!==tok) return; if(ev && ev.error && (ev.error==='interrupted'||ev.error==='canceled')) return;
         if(ev && ev.error){ retryHere(ev.error); return; }
