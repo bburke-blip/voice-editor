@@ -134,7 +134,7 @@ aside{overflow-x:hidden} #convo li,#convo .cq,#convo .ca,#convo .csugg{min-width
 </head>
 <body>
 <header>
-  <h1>Voice Editor <span class="ver">v29</span></h1>
+  <h1>Voice Editor <span class="ver">v30</span></h1>
   <label class="filebtn" id="openlabel" tabindex="0" title="Word, PDF or text">Open file<input id="file" type="file" accept=".docx,.pdf,.txt,.fountain,.md"></label>
   <div class="group">
     <button id="back" title="Previous section (Left arrow)">Back</button>
@@ -157,6 +157,7 @@ aside{overflow-x:hidden} #convo li,#convo .cq,#convo .ca,#convo .csugg{min-width
       <div id="status" data-s="idle"><span id="dot"></span><span id="stxt">Ready. Press Read.</span></div>
       <div id="editmode" class="note" style="margin-top:4px"></div>
       <div id="heard"></div>
+      <div id="nowv" class="note" style="margin:4px 0 0"></div>
       <div id="reply"></div>
       <form id="cmdform"><input id="cmd" type="text" placeholder="Or type a command" aria-label="Type a command"><button>Do it</button></form>
       <div class="dictopts">
@@ -850,7 +851,7 @@ function voices(){
   sel.innerHTML=''; sorted.forEach(x=>{ const o=document.createElement('option'); o.value=x.name; o.textContent=x.name.replace(/^Microsoft /,'')+' ('+x.lang+')'; sel.appendChild(o); });
   if(keep && sorted.some(x=>x.name===keep)) sel.value=keep;
 }
-function curVoice(){ return synth.getVoices().find(x=>x.name===$('voice').value); }
+function curVoice(){ const all=synth.getVoices(); return all.find(x=>x.name===$('voice').value) || all.find(x=>/^en/i.test(x.lang)) || all[0]; }
 // If a voice fails (Edge's online "Natural" voices need Microsoft's service, which can be slow to wake after a restart),
 // fall back to a voice that lives on this computer, keeping the language and, where possible, the gender.
 let FORCE_LOCAL=false, speechFailures=0;
@@ -874,6 +875,7 @@ function localStandIn(v, isNarr){
 }
 function utter(text, opt){ rememberSpoken(text); const u=new SpeechSynthesisUtterance(text); u.addEventListener&&u.addEventListener('end',()=>{ lastSpeechEnd=Date.now(); }); const nv=curVoice(); let v=(opt&&opt.voice)||nv; const isNarr=(v===nv); const orig=v; let pitch=(opt&&opt.pitch)||1;
   if(FORCE_LOCAL){ v=localStandIn(v,isNarr); if(!isNarr && v===basicStand(nv)){ const g=voiceGender(orig); pitch=g==='f'?1.25:g==='m'?0.78:0.88; } }   // only one built-in voice: set characters apart from the narrator by pitch
+  { const ne=FORCE_LOCAL?basicStand(nv):nv; if(!isNarr && v && ne && (v===ne || (v.voiceURI&&v.voiceURI===ne.voiceURI) || v.name===ne.name)){ const g=voiceGender(orig||v); pitch=g==='f'?1.25:g==='m'?0.78:0.88; } }
   if(v){u.voice=v;u.lang=v.lang;} u.rate=+$('rate').value; u.pitch=isNarr?1:pitch; return u; }
 function stopSpeech(){ tok++; busy=false; try{ synth.cancel(); synth.resume(); }catch(e){} }
 function speechTrouble(why){
@@ -919,7 +921,7 @@ function readOn(){
       const retryHere=why=>{ if(my!==tok) return; const again=speechTrouble(why); stopSpeech(); cur=c.pi; si=c.s0; if(again) readOn(); else setMode('paused'); };
       let watchdog=null; const arm=()=>{ watchdog=setTimeout(()=>{ if(!started && my===tok && mode==='reading') retryHere('no sound'); }, 7000); };
       if(inFlight===1) arm(); else u._arm=arm;
-      u.onstart=()=>{ started=true; clearTimeout(watchdog); if(my!==tok) return; prevSent=curSent; curSent=c.orig+' '+c.spoken; spokenPrevText=spokenNowText; spokenNowText=c.spoken; si=c.s0; if(cur!==c.pi) setCur(c.pi); else renderPara(cur); };
+      u.onstart=()=>{ started=true; clearTimeout(watchdog); if(my!==tok) return; try{ const P2=S.paras[c.pi]; const who=(P2.role==='dialogue'&&P2.char&&$('tr').checked)?P2.char:'Narrator'; $('nowv').textContent='Speaking: '+who+' ('+P2.role+') - voice: '+((u.voice&&u.voice.name)||'device default').replace(/^Microsoft /,'').replace(/ Online.*/,'')+', pitch '+u.pitch; }catch(e){} prevSent=curSent; curSent=c.orig+' '+c.spoken; spokenPrevText=spokenNowText; spokenNowText=c.spoken; si=c.s0; if(cur!==c.pi) setCur(c.pi); else renderPara(cur); };
       u.onboundary=ev=>{ if(my!==tok||typeof ev.charIndex!=='number') return; let k=0; while(k+1<c.offs.length && c.offs[k+1]<=ev.charIndex) k++; if(c.s0+k!==si){ si=c.s0+k; renderPara(cur); } };
       const fin=ev=>{ clearTimeout(watchdog); if(my!==tok) return; if(ev && ev.error && (ev.error==='interrupted'||ev.error==='canceled')) return;
         if(ev && ev.error){ retryHere(ev.error); return; }
@@ -1053,7 +1055,7 @@ function autoCast(force){
     .sort((a,b)=>(/natural|neural|online/i.test(b.name)?1:0)-(/natural|neural|online/i.test(a.name)?1:0));
   if(!pool.length) return;
   if(force) CAST={};
-  const narr=$('voice').value; const used=new Map(); pool.forEach(v=>used.set(v.name,0)); if(used.has(narr)) used.set(narr,1e6);
+  const narr=(curVoice()||{}).name||$('voice').value; const used=new Map(); pool.forEach(v=>used.set(v.name,0)); if(used.has(narr)) used.set(narr,1e6);
   const names=new Set((S.cast||[]).map(c=>c.name)); Object.keys(CAST).forEach(k=>{ if(!names.has(k)) delete CAST[k]; });
   // Keep earlier choices that still fit: a voice you picked yourself always stays; an automatic one stays only if its sex matches the name.
   (S.cast||[]).forEach(c=>{ const e=CAST[c.name]; if(!e) return; const v=pool.find(x=>x.name===e.voice);
