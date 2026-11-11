@@ -134,7 +134,7 @@ aside{overflow-x:hidden} #convo li,#convo .cq,#convo .ca,#convo .csugg{min-width
 </head>
 <body>
 <header>
-  <h1>Voice Editor <span class="ver">v32</span></h1>
+  <h1>Voice Editor <span class="ver">v33</span></h1>
   <label class="filebtn" id="openlabel" tabindex="0" title="Word, PDF or text">Open file<input id="file" type="file" accept=".docx,.pdf,.txt,.fountain,.md"></label>
   <div class="group">
     <button id="back" title="Previous section (Left arrow)">Back</button>
@@ -143,7 +143,7 @@ aside{overflow-x:hidden} #convo li,#convo .cq,#convo .ca,#convo .csugg{min-width
     <button id="mic" class="mic" title="Microphone on or off">Mic off</button>
   </div>
   <label class="small">Speed <input id="rate" type="range" min="0.7" max="1.6" step="0.05" value="1"></label>
-  <label class="small">Voice <select id="voice"></select></label>
+  <label class="small">Voice <select id="voice"></select></label> <span id="nowspk" class="small" aria-live="polite"></span>
   <span class="spacer"></span>
   <div class="group">
     <input id="fname" type="text" aria-label="Save as file name">
@@ -191,6 +191,7 @@ aside{overflow-x:hidden} #convo li,#convo .cq,#convo .ca,#convo .csugg{min-width
         <label class="small"><input id="tr_action" type="checkbox" checked> Action</label>
         <label class="small"><input id="tr_paren" type="checkbox"> Parentheticals</label>
         <label class="small"><input id="tr_trans" type="checkbox"> Transitions</label>
+        <label class="small" title="Plain US and Canadian English voices are always used first. When they run out, other English accents are used so characters stay distinct. Turn off to reuse plain voices at a different pitch instead."><input id="tr_acc" type="checkbox" checked> Other accents when plain voices run out</label>
       </div>
       <ul id="castlist"></ul>
       <div class="row" style="margin-top:10px;justify-content:flex-start"><button id="recast" type="button">Re-cast all</button></div>
@@ -212,7 +213,8 @@ aside{overflow-x:hidden} #convo li,#convo .cq,#convo .ca,#convo .csugg{min-width
     </section>
     <section class="panel">
       <div class="row"><h2 style="margin:0">Pronunciation <span id="dcount"></span></h2>
-        <label class="small"><input id="capsfix" type="checkbox" checked> Read CAPITALS as words</label></div>
+        <label class="small"><input id="capsfix" type="checkbox" checked> Read CAPITALS as words</label>
+        <label class="small" title="Off: a short chime confirms each edit. On: the app reads the changed sentence back (the mic will hear it)."><input id="readback" type="checkbox"> Read each edit back aloud</label></div>
       <p class="note">How the voice says things. The document itself is not changed. Screenplay terms are built in; add names and words it gets wrong. You can also say "pronounce Siobhan as shiv-awn".</p>
       <form id="dform"><input id="dfrom" type="text" placeholder="Written" aria-label="Written as"><input id="dto" type="text" placeholder="Say it as" aria-label="Say it as"><button>Add</button></form>
       <ul id="dlist"></ul>
@@ -845,9 +847,17 @@ function setMode(m, txt){
 function reply(t, cls){ const r=$('reply'); r.textContent=t; r.className=cls||''; }
 
 // ---------- speech out ----------
+// Plain North American English voices (en-US, en-CA) come first everywhere. Other English accents are a fallback
+// for when there are not enough distinct voices to go round. Non-English voices are never offered first.
+const NOVELTY=/\b(Albert|Bad News|Bahh|Bells|Boing|Bubbles|Cellos|Deranged|Good News|Hysterical|Jester|Organ|Superstar|Trinoids|Whisper|Wobble|Zarvox)\b/i;
+function usable(v){ return !NOVELTY.test(v.name||''); }
+function voiceTier(v){ const l=(v.lang||'').replace('_','-'); if(/^en-(US|CA)$/i.test(l)) return 0; if(/^en(-|$)/i.test(l)) return 1; return 2; }
+function accentRank(v){ return /^en-(GB|AU|NZ|IE)$/i.test((v.lang||'').replace('_','-'))?0:1; }
+function rankVoice(v){ return voiceTier(v)*100 + (usable(v)?0:50) + (v.default?-1:0) + (voiceTier(v)===1?accentRank(v)*10:0) + (/natural|neural|online/i.test(v.name)?0:5); }
+const byRank=(a,b)=>rankVoice(a)-rankVoice(b)||a.name.localeCompare(b.name);
 function voices(){
   const v=synth.getVoices(); const sel=$('voice'); const keep=sel.value||store('voice');
-  const sorted=v.slice().sort((a,b)=>score(b)-score(a)); function score(x){ return (/natural|neural|online/i.test(x.name)?4:0)+(/^en/i.test(x.lang)?2:0)+(/en-CA|en-US/i.test(x.lang)?1:0); }
+  const sorted=v.slice().sort(byRank);
   sel.innerHTML=''; sorted.forEach(x=>{ const o=document.createElement('option'); o.value=x.name; o.textContent=x.name.replace(/^Microsoft /,'')+' ('+x.lang+')'; sel.appendChild(o); });
   if(keep && sorted.some(x=>x.name===keep)) sel.value=keep;
 }
@@ -858,7 +868,7 @@ let FORCE_LOCAL=false, speechFailures=0;
 function localList(){ return synth.getVoices().filter(x=>x.localService!==false); }
 function basicStand(v){
   if(!v || v.localService!==false) return v;
-  const all=localList(), same=all.filter(x=>x.lang===v.lang), en=all.filter(x=>/^en/i.test(x.lang)), g=voiceGender(v);
+  const all=localList().filter(usable), same=all.filter(x=>x.lang===v.lang), en=all.filter(x=>/^en/i.test(x.lang)).sort((a,b)=>voiceTier(a)-voiceTier(b)), g=voiceGender(v);
   const pick=l=>l.find(x=>voiceGender(x)===g)||l[0];
   return pick(same)||pick(en)||all[0]||v;
 }
@@ -873,65 +883,101 @@ function localStandIn(v, isNarr){
   const same=pool.filter(x=>voiceGender(x)===g), cand=(same.length?same:pool).slice().sort((x,y)=>(STANDUSE[x.name]||0)-(STANDUSE[y.name]||0));
   const r=cand[0]||ns; STANDUSE[r.name]=(STANDUSE[r.name]||0)+1; return STAND[v.name]=r;
 }
-function utter(text, opt){ rememberSpoken(text); const u=new SpeechSynthesisUtterance(text); u.addEventListener&&u.addEventListener('end',()=>{ lastSpeechEnd=Date.now(); }); const nv=curVoice(); let v=(opt&&opt.voice)||nv; const isNarr=(v===nv); const orig=v; let pitch=(opt&&opt.pitch)||1;
+function utter(text, opt){ rememberSpoken(text); const u=new SpeechSynthesisUtterance(text); u.addEventListener&&u.addEventListener('end',()=>{ lastSpeechEnd=Date.now(); }); const nv=curVoice(); let v=(opt&&opt.voice)||nv; const isNarr=!(opt&&opt.char); const orig=v; let pitch=(opt&&opt.pitch)||1;
   if(FORCE_LOCAL){ v=localStandIn(v,isNarr); if(!isNarr && v===basicStand(nv)){ const g=voiceGender(orig); pitch=g==='f'?1.25:g==='m'?0.78:0.88; } }   // only one built-in voice: set characters apart from the narrator by pitch
-  { const ne=FORCE_LOCAL?basicStand(nv):nv; if(!isNarr && v && ne && (v===ne || (v.voiceURI&&v.voiceURI===ne.voiceURI) || v.name===ne.name)){ const g=voiceGender(orig||v); pitch=g==='f'?1.25:g==='m'?0.78:0.88; } }
-  if(v){u.voice=v;u.lang=v.lang;} u.rate=+$('rate').value; u.pitch=isNarr?1:pitch; return u; }
-function stopSpeech(){ tok++; busy=false; try{ synth.cancel(); synth.resume(); }catch(e){} }
+  { const ne=FORCE_LOCAL?basicStand(nv):nv; if(!isNarr && v && ne && (v===ne || (v.voiceURI&&v.voiceURI===ne.voiceURI) || v.name===ne.name) && true){ const g=(opt&&opt.g&&opt.g!=='?')?opt.g:voiceGender(orig||v); pitch=Math.min(1.9,Math.max(0.5,pitch*(g==='f'?1.25:g==='m'?0.78:0.88))); } }
+  if(v){u.voice=v;u.lang=v.lang;}
+  u.rate=+$('rate').value; u.pitch=isNarr?1:pitch; return u; }
+// Chrome and Edge can kill an utterance spoken straight after cancel(), so speaking waits a moment after any cancel,
+// keeps order, and is dropped if you paused in the meantime.
+let lastCancelAt=0, nextSpeakAt=0, spokenQueue=[];
+function speakGuarded(u, my){
+  const t=Math.max(Date.now(), nextSpeakAt, lastCancelAt+120); nextSpeakAt=t+1; const d=t-Date.now();
+  if(d>0) setTimeout(()=>{ if(my===tok) { try{ synth.speak(u); }catch(e){} } }, d); else synth.speak(u);
+}
+function stopSpeech(){ tok++; busy=false; spokenQueue=[]; lastCancelAt=Date.now(); try{ synth.cancel(); synth.resume(); }catch(e){} }
 function speechTrouble(why){
   speechFailures++;
-  if(!FORCE_LOCAL){ FORCE_LOCAL=true; reply('The online voices aren\u2019t answering ('+why+'). Using this computer\u2019s built-in voices for now. Reload the page later to try the online ones again.','bad'); return true; }
-  reply('The computer\u2019s speech isn\u2019t responding. Close Edge completely and start Voice Editor again. Also check the sound is on and this tab isn\u2019t muted.','bad'); return false;
+  if(!FORCE_LOCAL){ FORCE_LOCAL=true; reply('The online voices aren’t answering ('+why+'). Using this computer’s built-in voices for now. Reload the page later to try the online ones again.','bad'); return true; }
+  reply('The computer’s speech isn’t responding. Close Edge completely and start Voice Editor again. Also check the sound is on and this tab isn’t muted.','bad'); return false;
 }
 function say(text, then){
   stopSpeech(); const my=tok; busy=true; const u=utter(text);
+  spokenPrevText=spokenNowText; spokenNowText=text;
   u.onend=()=>{ if(my!==tok) return; busy=false; then&&then(); };
   u.onerror=ev=>{ if(my!==tok) return; busy=false; if(ev.error && ev.error!=='interrupted' && ev.error!=='canceled' && !FORCE_LOCAL){ speechTrouble(ev.error); return say(text,then); } then&&then(); };
-  synth.speak(u);
+  speakGuarded(u,my);
 }
-// Reading engine: speaks several sentences per utterance and keeps the next chunk
-// queued, so there is no dead air between sentences or sections.
-const CHUNK_CHARS=280, AHEAD=2;
+function showWho(c,u){ const sh=n=>(n||'').replace(/^Microsoft /,'').replace(/ Online.*/,'').replace(/ - English.*/,'').replace(/ Desktop.*/,'');
+  try{ const nv=$('nowv'); if(nv && u){ const P2=S.paras[c.pi]||{}; const cv=P2.char&&CAST[P2.char];
+    nv.innerHTML='<b>'+esc(c.who)+'</b> ('+esc(P2.role||'')+') reads: "'+esc(c.spoken.slice(0,36))+'"<br>voice used: <b>'+esc(sh(u.voice&&u.voice.name)||'device default')+'</b>, pitch '+u.pitch+'<br>narrator (main Voice): '+esc(sh((curVoice()||{}).name))+(cv?' | cast voice for '+esc(P2.char)+': '+esc(sh(cv.voice)):''); }
+  }catch(e){ try{ $('nowv').textContent='label error: '+e.message; }catch(_){} }
+  const el=$('nowspk'); if(!el) return; const nm=x=>x?x.name.replace(/^Microsoft /,'').replace(/ Online \(Natural\).*/,'').replace(/ - .*/,''):'';
+  el.textContent = $('tr').checked ? 'Now: '+c.who+(c.vopt&&c.vopt.voice?' ('+nm(c.vopt.voice)+')':'') : ''; }
+// Reading engine: speaks several sentences per utterance and keeps the next chunk queued, so there is no dead air.
+// Every piece is given its speaker here, one piece at a time: a character only ever voices their own words; stage
+// direction, scene headings and any (parenthetical) inside a speech always go to the narrator.
+const CHUNK_CHARS=280, AHEAD=2; let readRetries={};
+function unitsFor(P){
+  const out=[]; const tr=$('tr').checked;
+  sentences(P.text).forEach((s,k)=>{
+    if(tr && P.role==='dialogue' && $('tr_paren').checked && /\([^)]*\)/.test(s)){
+      s.split(/(\([^)]*\))/).forEach(piece=>{ if(!piece.trim()) return; const isP=/^\([^)]*\)$/.test(piece);
+        const sp=isP ? speakable(piece.replace(/^\(|\)$/g,'')).replace(/\s+/g,' ').trim() : spokenFor(P,piece);
+        if(sp) out.push({k, text:sp, narr:isP}); });
+    } else { const sp=spokenFor(P,s); if(sp) out.push({k, text:sp, narr:false}); }
+  });
+  return out;
+}
 function readOn(){
   reconcileDoc(); stopSpeech();
-  if(!synth.getVoices().length && !readOn._waited){ readOn._waited=true; reply('Waiting for the computer\u2019s voices to load...'); setTimeout(()=>readOn(),1500); return; }
+  if(!synth.getVoices().length && !readOn._waited){ readOn._waited=true; reply('Waiting for the computer’s voices to load...'); const t0=tok; setTimeout(()=>{ if(tok===t0) readOn(); },1500); return; }
   readOn._waited=false; usedLen=new Map(heardLen); setMode('reading');
-  const my=tok; let gp=cur, gs=si, inFlight=0, done=false;
+  const my=tok; let gp=cur, gs=si, gu=-1, units=null, inFlight=0, done=false;
   const nextChunk=()=>{
     while(gp<S.paras.length){
       const P=S.paras[gp];
-      if(!P.text || !speaksRole(P)){ gp++; gs=0; continue; }
-      const ss=sentences(P.text);
-      if(gs>=ss.length){ gp++; gs=0; continue; }
-      const c={pi:gp, s0:gs, offs:[], spoken:'', vopt:voiceFor(P)};
-      while(gs<ss.length && (c.offs.length===0 || c.spoken.length+ss[gs].length<=CHUNK_CHARS)){
-        c.offs.push(c.spoken.length); const sp=spokenFor(P,ss[gs]); if(sp) c.spoken+=sp+' '; gs++;
-      }
-      c.spoken=c.spoken.trim(); c.orig=ss.slice(c.s0,gs).join(' ');
+      if(!P.text || !speaksRole(P)){ gp++; gs=0; gu=-1; continue; }
+      if(gu<0){ units=unitsFor(P); gu=units.findIndex(x=>x.k>=gs); if(gu<0){ gp++; gs=0; gu=-1; continue; } }
+      if(gu>=units.length){ gp++; gs=0; gu=-1; continue; }
+      const first=units[gu], narr=first.narr||P.role!=='dialogue';
+      const c={pi:gp, s0:first.k, offs:[], ks:[], spoken:'', vopt:first.narr?narrOpt():voiceFor(P), who:narr?'Narrator':P.char};
+      while(gu<units.length && units[gu].narr===first.narr && (c.offs.length===0 || c.spoken.length+units[gu].text.length<=CHUNK_CHARS)){
+        c.offs.push(c.spoken.length); c.ks.push(units[gu].k); c.spoken+=units[gu].text+' '; gu++; }
+      c.spoken=c.spoken.trim(); c.orig=sentences(P.text).slice(c.s0,c.ks[c.ks.length-1]+1).join(' ');
+      if(gu>=units.length){ gp++; gs=0; gu=-1; }
       if(!c.spoken) continue;
       return c;
     }
     return null;
   };
+  // A voice that fails or is dropped is retried on the same piece first; only repeated failure switches to built-in voices.
+  const recover=(c,why,hard)=>{
+    if(my!==tok) return; const k=c.pi+':'+c.s0; readRetries[k]=(readRetries[k]||0)+1;
+    stopSpeech(); cur=c.pi; si=c.s0; const t=tok;
+    if(readRetries[k]<=2){ setTimeout(()=>{ if(tok===t) readOn(); },250); return; }
+    delete readRetries[k];
+    if(hard && speechTrouble(why)){ setTimeout(()=>{ if(tok===t) readOn(); },250); return; }
+    setMode('paused'); if(!hard) reply('The voice stopped answering. Press Read to carry on.','bad');
+  };
   const fill=()=>{
     if(my!==tok||mode!=='reading') return;
     while(inFlight<($('tr').checked?1:AHEAD) && !done){
       const c=nextChunk(); if(!c){ done=true; break; }
-      const u=utter(c.spoken, c.vopt); inFlight++; let started=false;
-      const retryHere=why=>{ if(my!==tok) return; const again=speechTrouble(why); stopSpeech(); cur=c.pi; si=c.s0; if(again) readOn(); else setMode('paused'); };
-      let watchdog=null; const arm=()=>{ watchdog=setTimeout(()=>{ if(!started && my===tok && mode==='reading') retryHere('no sound'); }, 7000); };
+      const u=utter(c.spoken, c.vopt); inFlight++; let started=false; spokenQueue.push(c.spoken);
+      let watchdog=null; const arm=()=>{ watchdog=setTimeout(()=>{ if(!started && my===tok && mode==='reading') recover(c,'no sound',true); }, 7000); };
       if(inFlight===1) arm(); else u._arm=arm;
-      u.onstart=()=>{ started=true; clearTimeout(watchdog); if(my!==tok) return; try{ const P2=S.paras[c.pi]; const sh=n=>(n||'').replace(/^Microsoft /,'').replace(/ Online.*/,'').replace(/ - English.*/,'').replace(/ Desktop.*/,''); const who=(P2.role==='dialogue'&&P2.char&&$('tr').checked)?P2.char:'Narrator';
-  $('nowv').innerHTML='<b>'+esc(who)+'</b> ('+esc(P2.role)+') reads: "'+esc(c.spoken.slice(0,36))+'"<br>voice used: <b>'+esc(sh(u.voice&&u.voice.name)||'device default')+'</b>, pitch '+u.pitch+'<br>narrator (main Voice): '+esc(sh((curVoice()||{}).name))+(CAST[P2.char]?' | cast voice for '+esc(P2.char)+': '+esc(sh(CAST[P2.char].voice)):''); }catch(e){ try{ $('nowv').textContent='label error: '+e.message; }catch(_){} } prevSent=curSent; curSent=c.orig+' '+c.spoken; spokenPrevText=spokenNowText; spokenNowText=c.spoken; si=c.s0; if(cur!==c.pi) setCur(c.pi); else renderPara(cur); };
-      u.onboundary=ev=>{ if(my!==tok||typeof ev.charIndex!=='number') return; let k=0; while(k+1<c.offs.length && c.offs[k+1]<=ev.charIndex) k++; if(c.s0+k!==si){ si=c.s0+k; renderPara(cur); } };
-      const fin=ev=>{ clearTimeout(watchdog); if(my!==tok) return; if(ev && ev.error && (ev.error==='interrupted'||ev.error==='canceled')) return;
-        if(ev && ev.error){ retryHere(ev.error); return; }
+      u.onstart=()=>{ started=true; clearTimeout(watchdog); delete readRetries[c.pi+':'+c.s0]; if(my!==tok) return; prevSent=curSent; curSent=c.orig+' '+c.spoken; spokenPrevText=spokenNowText; spokenNowText=c.spoken; si=c.s0; showWho(c,u); if(cur!==c.pi) setCur(c.pi); else renderPara(cur); };
+      u.onboundary=ev=>{ if(my!==tok||typeof ev.charIndex!=='number') return; let k=0; while(k+1<c.offs.length && c.offs[k+1]<=ev.charIndex) k++; const sk=c.ks[k]; if(sk!==si){ si=sk; renderPara(cur); } };
+      const fin=ev=>{ clearTimeout(watchdog); if(my!==tok) return;
+        if(ev && ev.error){ recover(c, ev.error, !(ev.error==='interrupted'||ev.error==='canceled')); return; }   // an "interrupted" we did not ask for means the engine dropped it
+        const q=spokenQueue.indexOf(c.spoken); if(q>=0) spokenQueue.splice(q,1);
         if(u._next&&u._next._arm) u._next._arm();
         inFlight--;
         if(done && inFlight===0){ si=0; setMode('idle','End of document.'); return; } fill(); };
       u.onend=fin; u.onerror=fin;
       if(fill._last && fill._last!==u) fill._last._next=u; fill._last=u;
-      synth.speak(u);
+      speakGuarded(u,my);
     }
     if(done && inFlight===0) setMode('idle','End of document.');
   };
@@ -964,7 +1010,7 @@ function renderDict(){
 }
 function addDict(from,to){ from=from.trim(); to=to.trim(); if(!from) return false;
   const i=DICT.findIndex(d=>d.from.toLowerCase()===from.toLowerCase()); if(i>=0) DICT[i].to=to; else DICT.unshift({from,to}); saveDict(); return true; }
-function pause(){ stopSpeech(); setMode('paused'); }
+function pause(){ readRetries={}; readOn._waited=false; stopSpeech(); setMode('paused'); const el=$('nowspk'); if(el) el.textContent=''; const nvl=$('nowv'); if(nvl) nvl.textContent=''; }
 
 // ---------- table read: screenplay roles and casting ----------
 const EXT_RE=/\s*\((?:V\.?\s?O\.?|O\.?\s?S\.?|O\.?\s?C\.?|CONT'?D|CONT\u2019D|CONTINUING|PRE-?LAP|FILTERED|ON (?:PHONE|TV|RADIO|SCREEN)|INTO PHONE|SUBTITLED|[^)]{0,20})\)\s*/gi;
@@ -990,22 +1036,53 @@ function isCueText(t){
   { const tk=n.split(' '); if(tk.length>1 && TIMEWORD_RE.test(tk[tk.length-1])) return false; } // "JIM - DAY", "JIM DAY": a slug fragment, not a speaker
   return /[A-Z]/.test(n) && n===n.toUpperCase() && /^[A-Z0-9 .'\u2019#&\-]+$/.test(n) && !/[.!?:]$/.test(n.replace(/\b(?:DR|MR|MRS|MS|ST|JR|SR)\.$/,'X'));
 }
+// Where cues, dialogue, parentheticals and action sit across the page, worked out from the script itself.
+// (Measuring from the leftmost mark on the page is not safe: scene numbers in the margin make plain action look
+// "indented", and action then reads as the last speaker's dialogue.)
+function findColumns(P){
+  const nextIdx=i=>{ for(let k=i+1;k<P.length;k++) if(P[k].text) return k; return -1; };
+  const mode=a=>{ const m=new Map(); a.forEach(v=>{ const k=Math.round(v/72)*72; m.set(k,(m.get(k)||0)+1); }); let b=null,bn=0; m.forEach((n,k)=>{ if(n>bn){ b=k; bn=n; } }); return b===null?null:{v:b,n:bn}; };
+  const isPar=t=>/^\(.*\)$/.test(t), near=(a,b)=>Math.abs(a-b)<=220;
+  const cues=[];
+  for(let i=0;i<P.length;i++){ const t=P[i].text; if(!t||!isCueText(t)) continue; const j=nextIdx(i); if(j<0) continue; const n=P[j].text; if(isSceneText(n)||isCueText(n)) continue; cues.push([i,j]); }
+  if(cues.length<3) return null;
+  const cueC=mode(cues.map(([i])=>P[i].indent||0)); if(!cueC) return null;
+  const dl=[], pr=[];
+  cues.forEach(([i,j])=>{ if(!near(P[i].indent||0,cueC.v)) return; let k=j; if(isPar(P[k].text)){ pr.push(P[k].indent||0); k=nextIdx(k); if(k<0) return; } dl.push(P[k].indent||0); });
+  const dlgC=mode(dl); if(!dlgC || Math.abs(dlgC.v-cueC.v)<200) return null;
+  const parC=pr.length?mode(pr):null;
+  const rest=[]; P.forEach(p=>{ if(!p.text||isSceneText(p.text)||TRANS_RE.test(p.text)) return; const v=p.indent||0;
+    if(near(v,cueC.v)||near(v,dlgC.v)||(parC&&near(v,parC.v))) return; rest.push(v); });
+  const actC=rest.length>=3?mode(rest):null;
+  const cols=[['cue',cueC.v],['dlg',dlgC.v]]; if(parC) cols.push(['par',parC.v]); if(actC) cols.push(['act',actC.v]);
+  return {cue:cueC.v, dlg:dlgC.v, par:parC?parC.v:null, act:actC?actC.v:null,
+    colOf(ind){ let best='other',bd=1e9; cols.forEach(([n,v])=>{ const d=Math.abs(ind-v); if(d<bd){ bd=d; best=n; } }); return bd<=450?best:'other'; } };
+}
 function classify(){
   const P=S.paras; let char=null, prev=null; const counts=new Map();
   const st=p=>(p.style||'').toLowerCase().replace(/\s+/g,'');
   const nextText=i=>{ for(let k=i+1;k<P.length;k++) if(P[k].text) return P[k]; return null; };
   // Everything before the first scene heading is the title page: titles and author names there are not speakers.
   const firstScene=P.findIndex(p=>p.text && (/sceneheading|slugline|^heading/.test(st(p)) || isSceneText(p.text)));
+  const cols=S.hasLayout?findColumns(P):null;
   P.forEach((p,i)=>{
     p.role='action'; p.char=null; p.cue=null;
-    const t=p.text; if(!t){ p.role='blank'; if(!S.hasLayout) { /* blank-line formats: a blank ends dialogue only after the dialogue */ } return; }
-    const s=st(p);
+    const t=p.text; if(!t){ p.role='blank'; return; }
+    const s=st(p), col=cols?cols.colOf(p.indent||0):null, styleAction=/action|general/.test(s);
     if(/sceneheading|slugline|^heading/.test(s) || isSceneText(t)){ p.role='scene'; char=null; }
     else if(/transition/.test(s) || (t===t.toUpperCase() && TRANS_RE.test(t))){ p.role='transition'; char=null; }
-    else if(/^character/.test(s) || (!s.includes('dialog') && isCueText(t) && (()=>{ if(firstScene>=0 && i<firstScene) return false; const n=nextText(i); return n && !isSceneText(n.text) && !isCueText(n.text) && (S.hasLayout ? (n.indent||0)>0 || /dialog|parenth/.test(st(n)) : true); })())){
+    else if(/^character/.test(s) || (!s.includes('dialog') && !styleAction && isCueText(t) && (()=>{ if(firstScene>=0 && i<firstScene) return false;
+        const n=nextText(i); if(!n || isSceneText(n.text) || isCueText(n.text)) return false;
+        if(!S.hasLayout) return true;
+        if(cols){ const nc=cols.colOf(n.indent||0); return Math.abs((p.indent||0)-cols.cue)<=220 && (nc==='dlg'||nc==='par'||/^\(.*\)$/.test(n.text)); }
+        return (n.indent||0)>0 || /dialog|parenth/.test(st(n)); })())){
       p.role='cue'; char=cueName(t); p.char=char; }
-    else if(char && (/parenth/.test(s) || /^\(.*\)$/.test(t))){ p.role='paren'; p.char=char; }
-    else if(char && (/dialog/.test(s) || (S.hasLayout ? (p.indent||0)>0 && !/action|general/.test(s) : (prev && ['cue','paren'].includes(prev.role))))){
+    else if(char && !styleAction && (/parenth/.test(s) || /^\(.*\)$/.test(t)) && !(cols && col==='act')){ p.role='paren'; p.char=char; }
+    // dialogue: only text sitting in the dialogue column, straight after its cue, parenthetical or earlier dialogue.
+    // A speaker is never "still talking" once action has intervened or the text sits in another column.
+    else if(char && !styleAction && (/dialog/.test(s) || (S.hasLayout
+        ? (cols ? (col==='dlg' && prev && ['cue','paren','dialogue'].includes(prev.role)) : (p.indent||0)>0)
+        : (prev && ['cue','paren'].includes(prev.role))))){
       p.role='dialogue'; p.char=char; counts.set(char,(counts.get(char)||0)+1); }
     else if(!S.hasLayout && p.raw && /\n/.test(p.raw.trim()) && isCueText(p.raw.trim().split('\n')[0].trim())){
       // Fountain-style: name on its own line, dialogue directly under it
@@ -1019,7 +1096,7 @@ function classify(){
 // Voice gender guesses from voice names (Edge, Windows, Chrome).
 const FEMALE_V=/\b(Hedda|Katja|Sylvia|Jessica|Kate|Serena|Stella|Lucy|Eva|Aria|Jenny|Michelle|Ana|Emma|Ava|Clara|Sonia|Libby|Maisie|Natasha|Zira|Hazel|Linda|Heather|Susan|Catherine|Samantha|Karen|Moira|Tessa|Fiona|Victoria|Female|Sara|Nancy|Jane|Amber|Ashley|Cora|Elizabeth|Monica|Leah|Molly|Emily|Joanna|Salli|Kimberly|Ivy|Kendra|Ruth|Olivia|Amy|Neerja|Rosa|Yan|Mia|Bella|Hollie|Abbi|Elsie|Annette|Freya|Jessa|Imani|Ezinne|Asilia|Luna|Nova|Shimmer)\b/i;
 const MALE_V=/\b(Pavel|Fred|Eddy|Reed|Rocko|Grandpa|Guy|Christopher|Eric|Roger|Steffan|Andrew|Brian|Liam|Ryan|Thomas|William|David|Mark|Richard|George|James|Male|Davis|Jason|Tony|Brandon|Jacob|Daniel|Alfie|Oliver|Prabhat|Connor|Mitchell|Ken|Kai|Luke|Matthew|Joey|Justin|Kevin|Stephen|Arthur|Gordon|Aaron|Ralph|Albert|Rishi|Tom|Elliot|Ethan|Noah|Darren|Duncan|Neil|Ken|Sean|Abeo|Chilemba|Wayne|Tim|Fable|Onyx|Echo)\b/i;
-function voiceGender(v){ return FEMALE_V.test(v.name)?'f':MALE_V.test(v.name)?'m':'?'; }
+function voiceGender(v){ const n=v.name||''; if(/female/i.test(n)) return 'f'; if(/(^|[^a-z])male/i.test(n)) return 'm'; return FEMALE_V.test(n)?'f':MALE_V.test(n)?'m':'?'; }
 // Character gender: first from the name or title (GRACE, BETH, MOTHER, WAITRESS), then from the pronouns around the name.
 const FEM_WORDS=new Set(('mother mom mum mama mommy mommie mrs ms miss madam madame maam lady woman girl grandma grandmother granny nana gran aunt auntie aunty sister nun queen princess duchess countess baroness waitress actress hostess stewardess policewoman congresswoman chairwoman businesswoman saleswoman daughter wife girlfriend bride widow mistress heroine goddess female niece mrs. ms. '+
  'grace beth mary anna ann anne annie emma emily olivia sophia sophie isabella isabel mia charlotte amelia harper evelyn abigail ella elizabeth liz lizzie sofia scarlett victoria madison luna chloe penelope layla zoe zoey nora lily eleanor hannah lillian addison aubrey ellie stella natalie leah hazel violet aurora savannah audrey brooklyn bella claire lucy paisley everly caroline nova emilia samantha maya willow naomi aaliyah elena sarah sara ariana allison gabriella alice madelyn cora ruby eva serenity autumn adeline hailey gianna valentina isla eliana nevaeh ivy sadie piper lydia alexa josephine emery julia delilah arianna vivian kaylee brielle madeline rylee clara hadley melanie mackenzie reagan liliana jade katherine kate katie kathryn kathy catherine cathy margaret maggie meg megan peggy patricia patty linda barbara barb susan sue jessica jennifer jenny jen karen nancy betty helen sandra donna carol ruth sharon michelle laura kimberly kim deborah debbie dorothy amy angela melissa brenda pamela nicole rebecca becky stephanie rachel janet maria heather diane julie joyce christina joan lauren judith cheryl andrea jacqueline martha gloria teresa janice marie kathleen jean doris tiffany priya rosa connie anjali neha pooja meera lakshmi divya kavya yuki mei ling fatima aisha leila zara nadia olga natasha katya irina svetlana ingrid greta sigrid astrid carmen lucia marta paula rosario dolores beatriz camila valeria daniela fiona moira siobhan aoife niamh bridget brigid maeve colleen erin deirdre gwen gwendolyn rhonda tammy wanda vera edith edna ethel florence gladys irene mabel mildred minnie myrtle pearl phyllis thelma agnes bertha blanche bonnie carla cindy crystal darlene denise dawn felicia gina holly jill joanne joy kristen krista kristin lisa lori lorraine marilyn marcia monica nina regina renee roberta rose roxanne sally shirley tina trudy valerie vanessa veronica wendy yvonne louise lois lena mona nell nellie polly rosalind rosemary sylvia tanya tara tess tessa vicky winnie zelda ashley amanda brittany courtney danielle diana eileen elaine ellen faith felicity gabrielle georgia hilary imogen isobel jane janie jodie joanna josie judy julianne june kayla kendra lana lara latoya leona lilly lindsay lola lorna lucille lynda mallory marge marjorie marlene maureen meredith miranda molly nadine nanette naomi nikki noelle olive pauline phoebe rita robyn rochelle sabrina selena shelly sheila sherry simone sonia sonya stacey suzanne sylvie tabitha tamara teri toni trish vivienne whitney yasmin zoe').split(/\s+/));
@@ -1052,34 +1129,40 @@ function castKey(){ return 'cast:'+fileName; }
 function loadCast(){ try{ CAST=JSON.parse(store(castKey())||'{}')||{}; }catch(e){ CAST={}; } }
 function saveCast(){ try{ localStorage.setItem('ve_'+castKey(),JSON.stringify(CAST)); }catch(e){} }
 function autoCast(force){
-  const all=synth.getVoices(); const en=all.filter(v=>/^en/i.test(v.lang)); const pool=(en.length?en:all).slice()
-    .sort((a,b)=>(/natural|neural|online/i.test(b.name)?1:0)-(/natural|neural|online/i.test(a.name)?1:0));
+  const all=synth.getVoices().filter(usable); const en=all.filter(v=>voiceTier(v)<=1); const pool=(en.length?en:all).slice().sort(byRank);
   if(!pool.length) return;
   if(force) CAST={};
   const narr=(curVoice()||{}).name||$('voice').value; const used=new Map(); pool.forEach(v=>used.set(v.name,0)); if(used.has(narr)) used.set(narr,1e6);
   const names=new Set((S.cast||[]).map(c=>c.name)); Object.keys(CAST).forEach(k=>{ if(!names.has(k)) delete CAST[k]; });
-  // Keep earlier choices that still fit: a voice you picked yourself always stays; an automatic one stays only if its sex matches the name.
+  // Keep earlier choices that still fit: a voice you picked yourself always stays; an automatic one stays only if it is a
+  // plain North American voice and its sex matches the name (so older casts with accent voices are quietly redone).
   (S.cast||[]).forEach(c=>{ const e=CAST[c.name]; if(!e) return; const v=pool.find(x=>x.name===e.voice);
     const g=charGender(c.name), vg=v?voiceGender(v):'?';
     if(v && v.name===narr && pool.length>1) delete CAST[c.name];   // the narrator's voice is reserved for the narrator
-    else if(v && (e.manual || g==='?' || vg==='?' || g===vg)) used.set(v.name,(used.get(v.name)||0)+1); else delete CAST[c.name]; });
+    else if(v && (e.manual || ((g==='?' || vg==='?' || g===vg) && voiceTier(v)===0))) used.set(v.name,(used.get(v.name)||0)+1);
+    else delete CAST[c.name]; });
+  const usedG={f:0,m:0,'?':0};
+  const others=t=>pool.filter(v=>voiceTier(v)===t && v.name!==narr);
   (S.cast||[]).forEach(c=>{
     if(CAST[c.name]) return;
     const g=charGender(c.name);
-    let cand = g==='?' ? pool : pool.filter(v=>voiceGender(v)===g);       // a woman gets a woman's voice, a man a man's
-    if(!cand.length) cand = pool.filter(v=>voiceGender(v)==='?');
-    if(!cand.length) cand = pool;
-    if(pool.length>1){ let nc=cand.filter(v=>v.name!==narr); if(!nc.length) nc=pool.filter(v=>v.name!==narr); cand=nc; }
-    cand = cand.slice().sort((a,b)=>used.get(a.name)-used.get(b.name));
-    const v=cand[0]; const n=used.get(v.name); used.set(v.name,n+1);
+    const fit=list=>{ if(g==='?') return list; const m=list.filter(v=>voiceGender(v)===g); return m.length?m:list.filter(v=>voiceGender(v)==='?'); };
+    const t0=fit(others(0)), t1=$('tr_acc').checked?fit(others(1)):[]; const unused=l=>l.filter(v=>(used.get(v.name)||0)===0);
+    // 1. an unused plain North American voice of the right sex  2. only then an unused other-English voice  3. otherwise reuse a North American voice at a different pitch
+    let cand=unused(t0); if(!cand.length) cand=unused(t1);
+    if(!cand.length) cand=t0.length?t0:(t1.length?t1:pool.filter(v=>v.name!==narr));
+    if(!cand.length) cand=pool;
+    cand=cand.slice().sort((a,b)=>(used.get(a.name)||0)-(used.get(b.name)||0) || (g==='?' ? (usedG[voiceGender(a)]||0)-(usedG[voiceGender(b)]||0) : 0));
+    const v=cand[0]; const n=used.get(v.name)||0; used.set(v.name,n+1); usedG[voiceGender(v)]=(usedG[voiceGender(v)]||0)+1;
     CAST[c.name]={voice:v.name, pitch:pitchFor(g,n)};
   });
   saveCast();
 }
+function narrOpt(){ return $('tr').checked ? {voice:curVoice(), pitch:1} : null; }
 function voiceFor(p){
   if(!$('tr').checked) return null;
-  if(p.role!=='dialogue' || !p.char || !CAST[p.char]) return {voice:curVoice(), pitch:1};   // narrator / stage manager: scene headings, action, transitions, parentheticals
-  const c=CAST[p.char]; return {voice:synth.getVoices().find(v=>v.name===c.voice), pitch:c.pitch||1};
+  if(p.role!=='dialogue' || !p.char || !CAST[p.char]) return narrOpt();   // narrator / stage manager: scene headings, action, transitions, parentheticals
+  const c=CAST[p.char]; return {voice:synth.getVoices().find(v=>v.name===c.voice), pitch:c.pitch||1, char:true, g:charGender(p.char)};
 }
 function speaksRole(p){
   if(!$('tr').checked) return true;
@@ -1093,13 +1176,14 @@ function spokenFor(p, sentence){
   }
   return speakable(s).replace(/\s+/g,' ').trim();
 }
+function vopts(l,sel){ return l.map(v=>'<option value="'+esc(v.name)+'"'+(v.name===sel?' selected':'')+'>'+esc(v.name.replace(/^Microsoft /,'').replace(/ Online \(Natural\)/,''))+' ('+v.lang+')</option>').join(''); }
 function renderCast(){
-  const box=$('castlist'); const vs=synth.getVoices(); const en=vs.filter(v=>/^en/i.test(v.lang)); const list=(en.length?en:vs);
+  const box=$('castlist'); const vs=synth.getVoices().filter(usable); const en=vs.filter(v=>voiceTier(v)<=1); const list=(en.length?en:vs).slice().sort(byRank);
   if(!S.cast||!S.cast.length){ box.innerHTML='<li class="note">No characters found. Table read works on screenplays: names in capitals above their lines.</li>'; return; }
   const nv=(curVoice()||{}).name||''; const nrow='<li><div class="cname">Narrator <span>stage manager: scene headings, action, transitions</span></div><div class="note" style="margin:0">'+esc(nv.replace(/^Microsoft /,'').replace(/ Online \(Natural\)/,''))+' (the main Voice at the top)</div></li>';
   box.innerHTML=nrow+S.cast.map((c,i)=>{ const cur=CAST[c.name]||{};
     return '<li><div class="cname">'+esc(c.name)+' <span>'+c.lines+' line'+(c.lines>1?'s':'')+'</span></div>'
-      +'<select data-c="'+i+'" aria-label="Voice for '+esc(c.name)+'">'+list.map(v=>'<option value="'+esc(v.name)+'"'+(v.name===cur.voice?' selected':'')+'>'+esc(v.name.replace(/^Microsoft /,'').replace(/ Online \(Natural\)/,''))+' ('+v.lang+')</option>').join('')+'</select>'
+      +'<select data-c="'+i+'" aria-label="Voice for '+esc(c.name)+'">'+vopts(list.filter(v=>voiceTier(v)===0),cur.voice)+(list.some(v=>voiceTier(v)!==0)?'<optgroup label="Other accents (only used when the plain ones run out)">'+vopts(list.filter(v=>voiceTier(v)!==0),cur.voice)+'</optgroup>':'')+'</select>'
       +'<select data-p="'+i+'" aria-label="Pitch for '+esc(c.name)+'">'+[['0.82','Lower'],['0.9','Low'],['1','Normal'],['1.1','High'],['1.2','Higher']].map(([v,l])=>'<option value="'+v+'"'+(Math.abs((cur.pitch||1)-v)<0.05?' selected':'')+'>'+l+'</option>').join('')+'</select>'
       +'<button type="button" data-t="'+i+'">Hear</button></li>'; }).join('');
 }
@@ -1208,7 +1292,7 @@ function sayLine(){
   const p=S.paras[cur]; if(!p||!p.text) return; const sent=sentences(p.text)[si]||p.text;
   stopSpeech(); const my=tok; busy=true; const u=utter(spokenFor(p,sent), voiceFor(p)||undefined);
   spokenPrevText=spokenNowText; spokenNowText=spokenFor(p,sent);
-  u.onend=u.onerror=()=>{ if(my!==tok) return; busy=false; }; synth.speak(u);
+  u.onend=u.onerror=()=>{ if(my!==tok) return; busy=false; }; speakGuarded(u,my);
 }
 function landOn(pi,k,quiet){ unsel(); stopSpeech(); setCur(pi); si=k; setMode('paused'); renderPara(cur); updateCtxEstimate(); if(!quiet) sayLine(); }
 function navLines(n){ const L=linePositions(); if(!L.length) return; const j=Math.max(0,Math.min(L.length-1,curPos(L)+n)); landOn(L[j].pi,L[j].k); }
@@ -1420,7 +1504,7 @@ function selectLoc(loc, verb){
   const txt=S.paras[f.pi].text.slice(f.s,f.e);
   reply((verb==='go'?'Found it':'Selected')+'. Say "change it", "change it to ...", "remove it", "highlight it" or "continue".','good');
   stopSpeech(); const my=tok; busy=true; const p=S.paras[f.pi]; const u=utter(spokenFor(p,txt), voiceFor(p)||undefined);
-  spokenPrevText=spokenNowText; spokenNowText=spokenFor(p,txt); u.onend=u.onerror=()=>{ if(my!==tok) return; busy=false; }; synth.speak(u);
+  spokenPrevText=spokenNowText; spokenNowText=spokenFor(p,txt); u.onend=u.onerror=()=>{ if(my!==tok) return; busy=false; }; speakGuarded(u,my);
   return true;
 }
 // "go to the bit that says the damp skirt and change it to this" -> two commands, run in order
@@ -1630,7 +1714,12 @@ function lastMatch(t,re){ const g=new RegExp(re.source,'gi'); let m, last=null; 
 // The mic hears the reading voice too. A trigger word only counts as echo if the reading voice is saying
 // that word together with the word you said just before it (e.g. "a long pause"). "Pause" on its own, or
 // "okay pause", always counts as you.
+// Words in the script itself ("Wait.", "Hold on.", "Enough.") must never pause the reading when the reading voice says them.
+const AMBIG_PAUSE=/^(?:stop|stop it|stop reading|wait|wait a sec|hang on|hold on|hold it|halt|enough|that's enough)$/i;
+function inScript(word){ const w=String(word).toLowerCase().replace(/[^a-z' ]+/g,' ').replace(/\s+/g,' ').trim(); if(!w) return false;
+  const hay=' '+(spokenQueue.join(' ')+' '+spokenNowText+' '+spokenPrevText+' '+recentSpoken.map(x=>x.t).join(' ')).toLowerCase().replace(/[^a-z' ]+/g,' ').replace(/\s+/g,' ')+' '; return hay.includes(' '+w+' '); }
 function isEcho(t,m){
+  if(AMBIG_PAUSE.test(m[1]||'') && inScript(m[1])) return true;
   const spoken=(spokenNowText+' '+spokenPrevText).toLowerCase().replace(/[^a-z' ]+/g,' ');
   const before=t.slice(0,m.index).toLowerCase().replace(/[^a-z' ]+/g,' ').trim().split(/\s+/).filter(Boolean).pop();
   if(!before) return false;
@@ -1652,7 +1741,7 @@ function extractCommand(t){
 // ---------- what counts as you talking ----------
 // Recent things the app said, so their echo through the mic is never taken as a command.
 let recentSpoken=[], lastSpeechEnd=0, heardLen=new Map(), usedLen=new Map();
-function rememberSpoken(t){ recentSpoken.push({t:t.toLowerCase(), at:Date.now()}); recentSpoken=recentSpoken.filter(x=>Date.now()-x.at<15000).slice(-6); }
+function rememberSpoken(t){ recentSpoken.push({t:t.toLowerCase(), at:Date.now()}); recentSpoken=recentSpoken.filter(x=>Date.now()-x.at<20000).slice(-14); }
 function soundsLikeEcho(text, dictating){
   if(Date.now()-lastSpeechEnd>4000 && !busy) return false; // the echo only arrives right after the app speaks
   const w=tokens(text).map(x=>x.w); if(w.length<2) return false;
@@ -1685,7 +1774,10 @@ function onHeard(e){
       else tainted.add(i); // reading voice picked up by the mic
       continue;
     }
-    if(busy){ tainted.add(i); continue; }
+    if(busy){   // the app is speaking (a prompt or a line it was asked to read): "pause" or "stop" still cuts in
+      const bm=lastMatch(t,/\b(pause|stop)\b/i);
+      if(bm && !isEcho(t,bm) && !inScript(bm[1])){ stopSpeech(); setMode('paused'); pausedIdx=i; pausedBy='pause'; usedLen.set(i,t.length); reply('Paused.'); continue; }
+      tainted.add(i); continue; }
     if((notePending||rewritePending) && !busy){ if(r.isFinal && !acceptHeard(t, r[0].confidence, true)) continue; dictHeard(t, r.isFinal); continue; }
     if(!r.isFinal) continue;
     let text=t;
@@ -1693,7 +1785,7 @@ function onHeard(e){
     pausedIdxSeen=-2;
     if(i===pausedIdx){ pausedIdxSeen=i;
       if(pausedBy==='hl'){ const h=firstLive(text,HL_RE)||text.match(HL_RE); text = h ? text.slice(h.index) : text; }
-      else { const m=text.match(PAUSE_RE); text = m ? text.slice(m.index+m[0].length).replace(/^[\s,.]+/,'') : ''; }
+      else { const m=firstLive(text,PAUSE_RE)||text.match(PAUSE_RE); text = m ? text.slice(m.index+m[0].length).replace(/^[\s,.]+/,'') : ''; }
       pausedIdx=-1; if(!text) continue; }
     else if(tainted.has(i)){
       // The mic heard the reading voice and you in one stretch: keep only a command that the reading voice didn't say.
@@ -1992,11 +2084,11 @@ function finishEdit(r, text){ lastEditAt=Date.now();
   r.changes.forEach(ch=>notesFor(ch.idx).forEach(relocate)); if(NOTES.length) persistNotes();
   renderLog(); refreshTableRead(); const ss=sentences(S.paras[cur].text); if(si>=ss.length) si=Math.max(0,ss.length-1);
   if(!S.paras[cur].text){ let to=S.paras.findIndex((p,i)=>i>cur && p.text && speaksRole(p)); if(to<0){ for(let i=cur-1;i>=0;i--) if(S.paras[i].text && speaksRole(S.paras[i])){ to=i; break; } } if(to>=0) landOn(to,0,true); }
-  if(r.global){ reply(r.note||('Changed '+r.changes.length+' section'+(r.changes.length>1?'s':'')+'.'),'good'); say(r.speak||('Changed '+r.changes.length+' places. Say continue when ready.')); return; }
-  if(!r.after){ reply('Deleted. Say "continue", "undo", or another change.','good'); say('Deleted.'); return; }
+  if(r.global){ reply(r.note||('Changed '+r.changes.length+' section'+(r.changes.length>1?'s':'')+'.'),'good'); if($('readback').checked) say(r.speak||('Changed '+r.changes.length+' places. Say continue when ready.')); else chime(); return; }
+  if(!r.after){ reply('Deleted. Say "continue", "undo", or another change.','good'); chime(); return; }
   const sent=changedSentence(r.before,r.after);
   reply('Done. Say "continue", "undo", or another change.','good');
-  say('Done. It now reads: '+speakable(sent));
+  if($('readback').checked) say('Done. It now reads: '+speakable(sent)); else chime();
 }
 function changedSentence(a,b){ let k=0; while(k<a.length&&k<b.length&&a[k]===b[k]) k++;
   let pos=0; for(const s of sentences(b)){ const at=b.indexOf(s,pos); if(at+s.length>=k) return s; pos=at+s.length; } return b; }
@@ -2030,7 +2122,8 @@ function renderLog(){
 function diffPart(a,b){ if(!a) return ['',b]; let s=0; while(s<a.length&&s<b.length&&a[s]===b[s]) s++; let e=0; while(e<a.length-s&&e<b.length-s&&a[a.length-1-e]===b[b.length-1-e]) e++;
   const pad=30, s0=Math.max(0,a.lastIndexOf(' ',Math.max(0,s-pad))); const cut=(t,x,y)=>(x>0?'...':'')+t.slice(x,y).trim()+(y<t.length?'...':'');
   return [cut(a,s0,Math.min(a.length,a.length-e+pad)), cut(b,s0,Math.min(b.length,b.length-e+pad))]; }
-let actx=null; function beep(){ try{ actx=actx||new AudioContext(); const o=actx.createOscillator(), g=actx.createGain(); o.frequency.value=330; g.gain.value=.08; o.connect(g); g.connect(actx.destination); o.start(); o.stop(actx.currentTime+.18);}catch(e){} }
+let actx=null; function chime(){ try{ actx=actx||new AudioContext(); const o=actx.createOscillator(), g=actx.createGain(); o.frequency.value=660; g.gain.value=.06; o.connect(g); g.connect(actx.destination); o.start(); o.stop(actx.currentTime+.1);}catch(e){} }
+function beep(){ try{ actx=actx||new AudioContext(); const o=actx.createOscillator(), g=actx.createGain(); o.frequency.value=330; g.gain.value=.08; o.connect(g); g.connect(actx.destination); o.start(); o.stop(actx.currentTime+.18);}catch(e){} }
 
 // ---------- files ----------
 // Next version of a file name: _v2 -> _v3, Draft3 -> Draft4, no number -> _v2 (before a _Nov2026 style date), month stamp = this month.
@@ -2122,11 +2215,13 @@ $('dimport').onchange=async ev=>{ const f=ev.target.files[0]; if(!f) return; let
 ['tr','tr_scene','tr_action','tr_paren','tr_trans'].forEach(id=>{ const v=store(id); if(v!==null && v!==undefined) $(id).checked=v==='1';
   $(id).onchange=()=>{ store(id,$(id).checked?'1':'0'); renderRoles(); if(mode==='reading') readOn(); }; });
 $('recast').onclick=()=>{ autoCast(true); renderCast(); reply('Recast.','good'); };
+if(store('tr_acc')==='0') $('tr_acc').checked=false;
+$('tr_acc').onchange=()=>{ store('tr_acc',$('tr_acc').checked?'1':'0'); autoCast(false); renderCast(); if(mode==='reading') readOn(); };
 $('castlist').onchange=ev=>{ const t=ev.target; const i=t.dataset.c??t.dataset.p; if(i===undefined) return; const c=S.cast[+i]; CAST[c.name]=CAST[c.name]||{};
   if(t.dataset.c!==undefined){ CAST[c.name].voice=t.value; CAST[c.name].manual=true; } else CAST[c.name].pitch=+t.value; saveCast(); };
 $('castlist').onclick=ev=>{ const b=ev.target.closest('[data-t]'); if(!b) return; const c=S.cast[+b.dataset.t];
   const p=S.paras.find(q=>q.role==='dialogue'&&q.char===c.name); if(!p) return; if(mode==='reading') pause();
-  stopSpeech(); const cc=CAST[c.name]||{}; const u=utter(speakable(sentences(p.text.replace(/\([^)]*\)/g,' '))[0]||p.text), {voice:synth.getVoices().find(v=>v.name===cc.voice), pitch:cc.pitch||1}); synth.speak(u); };
+  stopSpeech(); const cc=CAST[c.name]||{}; const u=utter(speakable(sentences(p.text.replace(/\([^)]*\)/g,' '))[0]||p.text), {voice:synth.getVoices().find(v=>v.name===cc.voice), pitch:cc.pitch||1, char:true}); speakGuarded(u,tok); };
 $('notes').addEventListener('click',ev=>{ const li=ev.target.closest('li[data-n]'); if(!li) return; const n=NOTES.find(x=>x.id===li.dataset.n); if(!n) return;
   if(ev.target.closest('[data-go]')){ stopSpeech(); setCur(n.pi); si=0; setMode('paused'); }
   if(ev.target.closest('[data-rm]')){ NOTES=NOTES.filter(x=>x!==n); if(notePending===n) notePending=null; persistNotes(); renderPara(n.pi); } });
@@ -2152,6 +2247,8 @@ $('convo').onclick=ev=>{ if(ev.target.closest('[data-use]')) useSuggestion(); };
   $(id).onchange=()=>{ store(id, (id==='caloud'||id==='cinterp')?($(id).checked?'1':'0'):$(id).value); updateCtxEstimate(); }; });
 $('capsfix').onchange=()=>store('capsfix',$('capsfix').checked?'1':'0');
 if(store('capsfix')==='0') $('capsfix').checked=false;
+if(store('readback')==='1') $('readback').checked=true;
+$('readback').onchange=()=>store('readback',$('readback').checked?'1':'0');
 $('save').onclick=saveFile;
 $('cmdform').onsubmit=ev=>{ ev.preventDefault(); clearTimeout(wisprTimer); const t=$('cmd').value.trim(); if(!t) return; $('cmd').value='';
   if(mode==='reading' && !/^(?:pause|stop|wait)/i.test(t)) pause();
